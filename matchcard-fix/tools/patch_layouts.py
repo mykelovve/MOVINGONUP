@@ -106,3 +106,23 @@ def patch(src, layouts):
 if __name__ == "__main__":
     src = open(sys.argv[1], "rb").read()
     open(sys.argv[2], "wb").write(patch(src, sys.argv[3:]))
+
+
+def strip(src, layouts):
+    """Remove GM_clip movie layers from the named layouts (restores the plain
+    CAS_dummy/SS_dummy slot with an unmarked 1.0 still scale)."""
+    s = Screen(src); c = Copier(src); changes = set()
+    for lname in layouts:
+        groups = [n for n in s.nodes if len(n[2]) >= 2 and n[2][-2] == lname and len(n[2][-1]) == 2 and n[2][-1][1] == "P"]
+        for pos, _, path in groups:
+            kids = s.children(pos); names = [s.name(k) for k in kids]
+            assert names == ["CAS_dummy", "SS_dummy", "GM_clip"], (path, names)
+            vec = c.alloc(12); c.put32(vec, 2)
+            cas = c.table(s, kids[0], True); still = c.table(s, kids[1], True)
+            c.floats(still, 5, 1.0, 1.0)
+            c.point(vec + 4, cas); c.point(vec + 8, still)
+            cf = s.field(pos, 55); c.point(cf, vec); changes.add(cf)
+    out = c.result()
+    allowed = {cf + i for cf in changes for i in range(4)}
+    assert not [i for i in range(len(src)) if src[i] != out[i] and i not in allowed], "non-slot bytes changed"
+    return out

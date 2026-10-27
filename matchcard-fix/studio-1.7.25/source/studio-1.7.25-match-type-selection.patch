@@ -1,3 +1,39 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+index fd022b8..0e40976 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+@@ -267,10 +267,12 @@ namespace GorillaStudio.NameFolders
+             var window = instance as Window;
+             if (window == null) return;
+             SetGameModelWindow(window);
++            ShowHelperVersion(window);
+             RoutedEventHandler loaded = null;
+             loaded = async (sender, args) =>
+             {
+                 window.Loaded -= loaded;
++                ShowHelperVersion(window);
+                 AttachStandaloneInterface(window);
+                 AttachDiscoveryButton(window);
+                 AttachPerformanceControls(window);
+@@ -306,6 +308,18 @@ namespace GorillaStudio.NameFolders
+             else window.Loaded += loaded;
+         }
+ 
++        // The title names the installed helper so an update is visible at a glance;
++        // the original "1.0.2" release number is replaced rather than duplicated.
++        private static void ShowHelperVersion(Window window)
++        {
++            string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
++            string title = window.Title ?? "";
++            if (title.Contains(version)) return;
++            if (title.Contains("1.0.2")) title = title.Replace("1.0.2", version);
++            else title = (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
++            window.Title = title;
++        }
++
+         private static bool NativeStartupAutomation(Window window)
+         {
+             Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
 diff --git a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 index b00d24c..b3833dd 100644
 --- a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj

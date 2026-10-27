@@ -73,10 +73,12 @@ class Copier:
         return bytes(self.o)
 
 
-def patch(src, layouts):
+def patch(src, layouts, template_src=None):
+    """template_src: another card whose 1on1 GM_clip is copied when this card has none."""
     s = Screen(src)
-    clips = [k for pos, _, path in s.nodes if len(path) >= 2 and path[-2] == "1on1"
-             for k in s.children(pos) if s.name(k) == "GM_clip"]
+    t = Screen(template_src) if template_src is not None else s
+    clips = [k for pos, _, path in t.nodes if len(path) >= 2 and path[-2] == "1on1"
+             for k in t.children(pos) if t.name(k) == "GM_clip"]
     template = clips[0]
     c = Copier(src); changes = set()
     for lname in layouts:
@@ -89,7 +91,7 @@ def patch(src, layouts):
             assert names == ["CAS_dummy", "SS_dummy"] and all(s.byte(k, 2) == 2 for k in kids), (path, names)
             vec = c.alloc(16); c.put32(vec, 3)
             cas = c.table(s, kids[0], True); still = c.table(s, kids[1], True)
-            mov = c.table(s, template, True)
+            mov = c.table(t, template, True)
             c.name(mov, "GM_clip"); c.asset(mov, fnv(movie_path(li, player)))
             c.floats(mov, 3, 0.0, -551.0); c.floats(mov, 4, 1024.0, 1024.0)
             c.floats(mov, 5, 1102 / 1024, 1102 / 1024)

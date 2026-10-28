@@ -26,7 +26,7 @@ index aabca43..73251f1 100644
              Uri uri;
              if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.UserInfo.Length != 0)
 diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
-index fd022b8..e491888 100644
+index fd022b8..f70858d 100644
 --- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
 +++ b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
 @@ -267,10 +267,12 @@ namespace GorillaStudio.NameFolders
@@ -42,7 +42,7 @@ index fd022b8..e491888 100644
                  AttachStandaloneInterface(window);
                  AttachDiscoveryButton(window);
                  AttachPerformanceControls(window);
-@@ -306,6 +308,38 @@ namespace GorillaStudio.NameFolders
+@@ -306,6 +308,40 @@ namespace GorillaStudio.NameFolders
              else window.Loaded += loaded;
          }
  
@@ -50,39 +50,41 @@ index fd022b8..e491888 100644
 +        // the original "1.0.2" release number is replaced rather than duplicated.
 +        private static void ShowHelperVersion(Window window)
 +        {
-+            string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
-+            string title = window.Title ?? "";
-+            if (!title.Contains(version))
-+                window.Title = title.Contains("1.0.2") ? title.Replace("1.0.2", version) : (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
-+            // The window draws its own header badge ("MOVING RENDERS · v1.0.2").
-+            ReplaceVersionText(window, "v1.0.2", "v" + version, 0);
-+            // Templated header parts can be created after Loaded; repeat once the UI is idle.
-+            window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => ReplaceVersionText(window, "v1.0.2", "v" + version, 0)));
++            // Cosmetic only: a failure here must never stop Studio from starting.
++            try
++            {
++                string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
++                string title = window.Title ?? "";
++                if (!title.Contains(version))
++                    window.Title = title.Contains("1.0.2") ? title.Replace("1.0.2", version) : (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
++                // The window draws its own header badge ("MOVING RENDERS · v1.0.2"); its
++                // templated parts exist only once the UI is idle after loading.
++                window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
++                {
++                    try { ReplaceVersionText(window, "v1.0.2", "v" + version, 0); }
++                    catch (Exception) { }
++                }));
++            }
++            catch (Exception) { }
 +        }
 +
 +        private static void ReplaceVersionText(DependencyObject node, string from, string to, int depth)
 +        {
 +            if (node == null || depth > 64) return;
 +            var block = node as TextBlock;
-+            if (block != null)
-+            {
-+                if (block.Inlines.Count > 0)
-+                    foreach (var run in System.Linq.Enumerable.OfType<System.Windows.Documents.Run>(block.Inlines))
-+                    { if (run.Text != null && run.Text.Contains(from)) run.Text = run.Text.Replace(from, to); }
-+                else if (block.Text != null && block.Text.Contains(from)) block.Text = block.Text.Replace(from, to);
-+            }
-+            var content = node as ContentControl;
-+            string text = content == null ? null : content.Content as string;
-+            if (text != null && text.Contains(from)) content.Content = text.Replace(from, to);
-+            int count = node is Visual || node is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetChildrenCount(node) : 0;
-+            for (int i = 0; i < count; i++) ReplaceVersionText(VisualTreeHelper.GetChild(node, i), from, to, depth + 1);
++            // Setting Text rebuilds the inline runs, so nothing iterates them while editing.
++            if (block != null && block.Text != null && block.Text.Contains(from)) block.Text = block.Text.Replace(from, to);
++            var children = new List<DependencyObject>();
++            if (node is Visual || node is System.Windows.Media.Media3D.Visual3D)
++                for (int i = 0, count = VisualTreeHelper.GetChildrenCount(node); i < count; i++) children.Add(VisualTreeHelper.GetChild(node, i));
++            foreach (DependencyObject child in children) ReplaceVersionText(child, from, to, depth + 1);
 +        }
 +
          private static bool NativeStartupAutomation(Window window)
          {
              Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
 diff --git a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
-index b00d24c..eb488fa 100644
+index b00d24c..f972a99 100644
 --- a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 +++ b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 @@ -5,7 +5,7 @@
@@ -90,7 +92,7 @@ index b00d24c..eb488fa 100644
      <RootNamespace>GorillaStudio.NameFolders</RootNamespace>
      <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 -    <Version>1.7.24</Version>
-+    <Version>1.7.28</Version>
++    <Version>1.7.29</Version>
      <Deterministic>true</Deterministic>
    </PropertyGroup>
    <ItemGroup>

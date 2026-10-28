@@ -1,0 +1,1 @@
+zig c++ -target x86_64-windows-gnu -std=c++17 -O2 -fno-exceptions -fno-rtti -fno-builtin-memchr -fno-builtin-wcschr -fno-builtin-wcsrchr -Wall -Wextra -Werror -shared plugin.cpp -lbcrypt -luser32 -o WWE2K26_MatchCardRelease.dlp   # Zig 0.13.0

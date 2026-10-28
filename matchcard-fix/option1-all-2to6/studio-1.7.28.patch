@@ -1,3 +1,30 @@
+diff --git a/src/GorillaStudio.NameFolders/AppUpdateClient.cs b/src/GorillaStudio.NameFolders/AppUpdateClient.cs
+index 936f4b4..b4e315d 100644
+--- a/src/GorillaStudio.NameFolders/AppUpdateClient.cs
++++ b/src/GorillaStudio.NameFolders/AppUpdateClient.cs
+@@ -32,7 +32,8 @@ namespace GorillaStudio.NameFolders
+     /// <summary>Downloads a checked update into a new private cache directory. Never installs or executes it.</summary>
+     public sealed class AppUpdateClient
+     {
+-        public const string FeedUrl = "https://raw.githubusercontent.com/janeg7207-droid/MAKE-A-RENDER-READER/main/downloads/update.json";
++        // Updates are published to the mykelovve/MOVINGONUP repository on its development branch.
++        public const string FeedUrl = "https://raw.githubusercontent.com/mykelovve/MOVINGONUP/refs/heads/claude/awesome-keller-c4gz8y/downloads/update.json";
+         private readonly AppUpdateTransport transport;
+         public AppUpdateClient() : this(HttpGetAsync) { }
+         public AppUpdateClient(AppUpdateTransport transport) { this.transport = transport ?? throw new ArgumentNullException(nameof(transport)); }
+diff --git a/src/GorillaStudio.NameFolders/AppUpdatePackage.cs b/src/GorillaStudio.NameFolders/AppUpdatePackage.cs
+index aabca43..73251f1 100644
+--- a/src/GorillaStudio.NameFolders/AppUpdatePackage.cs
++++ b/src/GorillaStudio.NameFolders/AppUpdatePackage.cs
+@@ -73,7 +73,7 @@ namespace GorillaStudio.NameFolders
+             if (size < 1 || size > MaximumPackageBytes) throw Invalid("The update download size is outside the supported limit.");
+             if (!ValidHash(sha256)) throw Invalid("The update SHA-256 is invalid.");
+             if (url == null || !Regex.IsMatch(url,
+-                @"\Ahttps://raw\.githubusercontent\.com/janeg7207-droid/MAKE-A-RENDER-READER/[0-9a-fA-F]{40}/downloads/[A-Za-z0-9][A-Za-z0-9._-]*_Update\.zip\z", RegexOptions.CultureInvariant))
++                @"\Ahttps://raw\.githubusercontent\.com/mykelovve/MOVINGONUP/[0-9a-fA-F]{40}/downloads/[A-Za-z0-9][A-Za-z0-9._-]*_Update\.zip\z", RegexOptions.CultureInvariant))
+                 throw Invalid("Update downloads must use an immutable commit in the app's GitHub repository.");
+             Uri uri;
+             if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.UserInfo.Length != 0)
 diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
 index fd022b8..e491888 100644
 --- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
@@ -55,7 +82,7 @@ index fd022b8..e491888 100644
          {
              Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
 diff --git a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
-index b00d24c..2180db3 100644
+index b00d24c..eb488fa 100644
 --- a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 +++ b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 @@ -5,7 +5,7 @@
@@ -63,7 +90,7 @@ index b00d24c..2180db3 100644
      <RootNamespace>GorillaStudio.NameFolders</RootNamespace>
      <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 -    <Version>1.7.24</Version>
-+    <Version>1.7.27</Version>
++    <Version>1.7.28</Version>
      <Deterministic>true</Deterministic>
    </PropertyGroup>
    <ItemGroup>
@@ -326,3 +353,38 @@ index 4f8bc50..df59231 100644
          private static bool ExpectedMovie(Screen source, int movie, int layout, int player)
          {
              if (source.ByteField(movie, 2) != 7 || source.ByteField(movie, 51) != 1) return false;
+diff --git a/tests/AppUpdateTests/Program.cs b/tests/AppUpdateTests/Program.cs
+index 3b67a3d..b837398 100644
+--- a/tests/AppUpdateTests/Program.cs
++++ b/tests/AppUpdateTests/Program.cs
+@@ -14,7 +14,7 @@ internal static class Program
+ {
+     private static string root;
+     private static int passed;
+-    private const string Url = "https://raw.githubusercontent.com/janeg7207-droid/MAKE-A-RENDER-READER/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/downloads/GorillaStudio_v1.0.2_Discovery_Experimental_Update.zip";
++    private const string Url = "https://raw.githubusercontent.com/mykelovve/MOVINGONUP/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/downloads/GorillaStudio_v1.0.2_Discovery_Experimental_Update.zip";
+     private static async Task<int> Main(string[] args)
+     {
+         if (args.Length == 3 && args[0] == "--validate")
+@@ -47,7 +47,7 @@ internal static class Program
+             Check(AppUpdatePackage.CompareVersions(new Version(1, 6, 6), new Version(1, 6, 6, 0)) == 0, "Three- and four-part equivalent helper versions compare equally");
+             Check(AppUpdatePackage.CompareVersions(new Version(1, 6, 5), new Version(1, 6, 6)) < 0 && AppUpdatePackage.CompareVersions(new Version(1, 6, 7), new Version(1, 6, 6)) > 0, "Update and downgrade comparisons use numeric version components");
+             foreach (string version in new[] { "1.6", "v1.6.6", "1.6.6-beta", "1.6.-6", "1.6.65536", "1.6.6.0.0", "1.6.6\n" }) Reject(() => AppUpdatePackage.ParseVersion(version), "Reject an invalid app version: " + version);
+-            foreach (string url in new[] { Url.Replace("https:", "http:"), Url.Replace("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "main"), Url.Replace("janeg7207-droid", "another-user"), Url.Replace("raw.githubusercontent.com", "raw.githubusercontent.com.evil.test"), Url + "?download=1", Url + "#fragment", Url.Replace("https://", "https://user@"), Url.Replace(".com/", ".com:443/"), Url.Replace("/downloads/", "/downloads/../downloads/"), Url.Replace("/downloads/", "/downloads%2F"), Url.Replace("_Update.zip", ".zip") })
++            foreach (string url in new[] { Url.Replace("https:", "http:"), Url.Replace("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "main"), Url.Replace("mykelovve", "another-user"), Url.Replace("raw.githubusercontent.com", "raw.githubusercontent.com.evil.test"), Url + "?download=1", Url + "#fragment", Url.Replace("https://", "https://user@"), Url.Replace(".com/", ".com:443/"), Url.Replace("/downloads/", "/downloads/../downloads/"), Url.Replace("/downloads/", "/downloads%2F"), Url.Replace("_Update.zip", ".zip") })
+                 Reject(() => AppUpdatePackage.CreateManifest("1.6.6", url, zip.Length, Sha(zip)), "Reject an untrusted or mutable package URL");
+             foreach (long size in new[] { 0L, -1L, AppUpdatePackage.MaximumPackageBytes + 1, long.MaxValue }) Reject(() => AppUpdatePackage.CreateManifest("1.6.6", Url, size, Sha(zip)), "Reject an unsupported download size");
+             foreach (string sha in new[] { "", new string('f', 63), new string('g', 64), " " + new string('a', 64) }) Reject(() => AppUpdatePackage.CreateManifest("1.6.6", Url, zip.Length, sha), "Reject an invalid advertised digest");
+diff --git a/tests/AppUpdateTransactionTests/Program.cs b/tests/AppUpdateTransactionTests/Program.cs
+index 32c90ad..82ddf11 100644
+--- a/tests/AppUpdateTransactionTests/Program.cs
++++ b/tests/AppUpdateTransactionTests/Program.cs
+@@ -169,7 +169,7 @@ internal static class TransactionTests
+         string package = Path.Combine(f.Work, "update.zip");
+         using (var zip = ZipFile.Open(package, ZipArchiveMode.Create)) foreach (var item in f.New) using (Stream output = zip.CreateEntry(item.Key).Open()) output.Write(item.Value);
+         f.Plan = AppUpdateTransaction.CreatePlan(f.App, package, "1.6.6", Hash(package), new FileInfo(package).Length, 4242, 638000000000000000L,
+-            "https://raw.githubusercontent.com/janeg7207-droid/MAKE-A-RENDER-READER/1111111111111111111111111111111111111111/downloads/GorillaStudio_Update.zip"); return f;
++            "https://raw.githubusercontent.com/mykelovve/MOVINGONUP/1111111111111111111111111111111111111111/downloads/GorillaStudio_Update.zip"); return f;
+     }
+     private static bool Originals(Fixture f) { return f.Old.All(item => File.Exists(Path.Combine(f.App, item.Key)) && File.ReadAllBytes(Path.Combine(f.App, item.Key)).SequenceEqual(item.Value)); }
+     private static bool Unrelated(Fixture f) { return File.ReadAllText(Path.Combine(f.App, "settings.json")) == "user settings" && File.ReadAllText(Path.Combine(f.App, "rosters", "user.json")) == "user roster" && File.ReadAllText(Path.Combine(f.App, "Renders", "saved.gmr")) == "user render"; }

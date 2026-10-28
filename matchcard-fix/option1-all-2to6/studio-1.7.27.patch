@@ -1,5 +1,5 @@
 diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
-index fd022b8..0e40976 100644
+index fd022b8..e491888 100644
 --- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
 +++ b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
 @@ -267,10 +267,12 @@ namespace GorillaStudio.NameFolders
@@ -15,7 +15,7 @@ index fd022b8..0e40976 100644
                  AttachStandaloneInterface(window);
                  AttachDiscoveryButton(window);
                  AttachPerformanceControls(window);
-@@ -306,6 +308,18 @@ namespace GorillaStudio.NameFolders
+@@ -306,6 +308,38 @@ namespace GorillaStudio.NameFolders
              else window.Loaded += loaded;
          }
  
@@ -25,17 +25,37 @@ index fd022b8..0e40976 100644
 +        {
 +            string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
 +            string title = window.Title ?? "";
-+            if (title.Contains(version)) return;
-+            if (title.Contains("1.0.2")) title = title.Replace("1.0.2", version);
-+            else title = (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
-+            window.Title = title;
++            if (!title.Contains(version))
++                window.Title = title.Contains("1.0.2") ? title.Replace("1.0.2", version) : (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
++            // The window draws its own header badge ("MOVING RENDERS · v1.0.2").
++            ReplaceVersionText(window, "v1.0.2", "v" + version, 0);
++            // Templated header parts can be created after Loaded; repeat once the UI is idle.
++            window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => ReplaceVersionText(window, "v1.0.2", "v" + version, 0)));
++        }
++
++        private static void ReplaceVersionText(DependencyObject node, string from, string to, int depth)
++        {
++            if (node == null || depth > 64) return;
++            var block = node as TextBlock;
++            if (block != null)
++            {
++                if (block.Inlines.Count > 0)
++                    foreach (var run in System.Linq.Enumerable.OfType<System.Windows.Documents.Run>(block.Inlines))
++                    { if (run.Text != null && run.Text.Contains(from)) run.Text = run.Text.Replace(from, to); }
++                else if (block.Text != null && block.Text.Contains(from)) block.Text = block.Text.Replace(from, to);
++            }
++            var content = node as ContentControl;
++            string text = content == null ? null : content.Content as string;
++            if (text != null && text.Contains(from)) content.Content = text.Replace(from, to);
++            int count = node is Visual || node is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetChildrenCount(node) : 0;
++            for (int i = 0; i < count; i++) ReplaceVersionText(VisualTreeHelper.GetChild(node, i), from, to, depth + 1);
 +        }
 +
          private static bool NativeStartupAutomation(Window window)
          {
              Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
 diff --git a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
-index b00d24c..129dfbc 100644
+index b00d24c..2180db3 100644
 --- a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 +++ b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
 @@ -5,7 +5,7 @@
@@ -43,7 +63,7 @@ index b00d24c..129dfbc 100644
      <RootNamespace>GorillaStudio.NameFolders</RootNamespace>
      <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 -    <Version>1.7.24</Version>
-+    <Version>1.7.26</Version>
++    <Version>1.7.27</Version>
      <Deterministic>true</Deterministic>
    </PropertyGroup>
    <ItemGroup>

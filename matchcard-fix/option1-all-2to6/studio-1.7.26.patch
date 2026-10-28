@@ -1,0 +1,308 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+index fd022b8..0e40976 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+@@ -267,10 +267,12 @@ namespace GorillaStudio.NameFolders
+             var window = instance as Window;
+             if (window == null) return;
+             SetGameModelWindow(window);
++            ShowHelperVersion(window);
+             RoutedEventHandler loaded = null;
+             loaded = async (sender, args) =>
+             {
+                 window.Loaded -= loaded;
++                ShowHelperVersion(window);
+                 AttachStandaloneInterface(window);
+                 AttachDiscoveryButton(window);
+                 AttachPerformanceControls(window);
+@@ -306,6 +308,18 @@ namespace GorillaStudio.NameFolders
+             else window.Loaded += loaded;
+         }
+ 
++        // The title names the installed helper so an update is visible at a glance;
++        // the original "1.0.2" release number is replaced rather than duplicated.
++        private static void ShowHelperVersion(Window window)
++        {
++            string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
++            string title = window.Title ?? "";
++            if (title.Contains(version)) return;
++            if (title.Contains("1.0.2")) title = title.Replace("1.0.2", version);
++            else title = (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
++            window.Title = title;
++        }
++
+         private static bool NativeStartupAutomation(Window window)
+         {
+             Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
+diff --git a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
+index b00d24c..129dfbc 100644
+--- a/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
++++ b/src/GorillaStudio.NameFolders/GorillaStudio.NameFolders.csproj
+@@ -5,7 +5,7 @@
+     <AssemblyName>GorillaStudio.NameFolders</AssemblyName>
+     <RootNamespace>GorillaStudio.NameFolders</RootNamespace>
+     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+-    <Version>1.7.24</Version>
++    <Version>1.7.26</Version>
+     <Deterministic>true</Deterministic>
+   </PropertyGroup>
+   <ItemGroup>
+diff --git a/src/GorillaStudio.NameFolders/MatchCardLayouts.cs b/src/GorillaStudio.NameFolders/MatchCardLayouts.cs
+index 4f8bc50..df59231 100644
+--- a/src/GorillaStudio.NameFolders/MatchCardLayouts.cs
++++ b/src/GorillaStudio.NameFolders/MatchCardLayouts.cs
+@@ -13,8 +13,9 @@ namespace GorillaStudio.NameFolders
+         public int CheckedSlots { get; internal set; }
+         public int MissingSlots { get; internal set; }
+         public int RepairSlots { get; internal set; }
++        public int ExtraSlots { get; internal set; }
+         public List<string> Issues { get; } = new List<string>();
+-        public bool LayoutReady { get { return CheckedSlots > 0 && MissingSlots == 0 && RepairSlots == 0 && Issues.Count == 0; } }
++        public bool LayoutReady { get { return CheckedSlots > 0 && MissingSlots == 0 && RepairSlots == 0 && ExtraSlots == 0 && Issues.Count == 0; } }
+     }
+ 
+     public sealed class MatchCardLayoutsReport
+@@ -25,6 +26,9 @@ namespace GorillaStudio.NameFolders
+         public int AddedSlots { get; internal set; }
+         public int RepairedSlots { get; internal set; }
+         public int CheckedSlots { get; internal set; }
++        public int StrippedSlots { get; internal set; }
++        public IReadOnlyList<string> SelectedLayouts { get; internal set; } = new string[0];
++        public int MovieLimit { get; internal set; } = MatchCardLayouts.PluginMovieLimit;
+         public bool IsCheck { get; internal set; }
+         public bool BakeRequired { get; internal set; }
+         public string BackupDirectory { get; internal set; }
+@@ -37,6 +41,9 @@ namespace GorillaStudio.NameFolders
+             + (CheckedSlots > 0 ? " " + CheckedSlots + " supported player slot(s) checked." : "")
+             + (CheckedSlots == 0 ? " No supported player slots were found in this folder; readiness is not established." : "")
+             + (RepairedSlots > 0 ? " " + RepairedSlots + (IsCheck ? " existing movie slot(s) need repair." : " existing movie slot(s) repaired.") : "")
++            + (StrippedSlots > 0 ? " " + StrippedSlots + (IsCheck ? " movie slot(s) outside the chosen match types exceed the plugin limit and need removal." : " movie slot(s) outside the chosen match types removed.") : "")
++            + (SelectedLayouts.Count > 0 ? " Moving match types: " + string.Join(", ", SelectedLayouts) + " (" + MatchCardLayouts.SelectionFile + ")." : "")
++            + (MovieLimit != MatchCardLayouts.PluginMovieLimit ? " Plugin movie limit: " + MovieLimit + " (requires WWE2K26_MatchCardCapacity in Plugins)." : "")
+             + (BakeRequired ? (IsCheck ? " Run Game setup, then bake once in Discovery." : " BAKE ONCE in Discovery, then restart the game.") : "")
+             + (Failed.Count + Unsupported.Count > 0 ? " " + (Failed.Count + Unsupported.Count) + " setup issue(s) need attention." : ""); } }
+     }
+@@ -55,6 +62,71 @@ namespace GorillaStudio.NameFolders
+         private static readonly HashSet<int> ScalarSlots = new HashSet<int> { 0, 2, 30, 39, 51, 52, 53 };
+         private static readonly StringComparison PathComparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+ 
++        // MovingRenders 4.21 tracks 16 match-card movies; a 17th overwrites the first.
++        // A card's own bg/fg movies use that table too, so a complete 101-slot card
++        // loses every moving portrait. Setup builds only the chosen match types.
++        public const int PluginMovieLimit = 16;
++        public const int MaxCardClips = PluginMovieLimit - 2;
++        // The optional WWE2K26_MatchCardCapacity companion widens the plugin's table;
++        // a "plugin_limit 120" line opts in once that companion is installed.
++        public const int CompanionMovieLimit = 120;
++        public const string LimitDirective = "plugin_limit";
++        public const string SelectionFile = "match_card_types.txt";
++        public static readonly IReadOnlyList<string> DefaultLayouts = Array.AsReadOnly(new[] { "1on1", "2on2", "triple_threat", "fatal_4way" });
++        public static IReadOnlyList<string> AllLayouts { get { return Array.AsReadOnly(Layouts); } }
++        public static int SlotCount(string layout) { int index = Array.IndexOf(Layouts, layout); if (index < 0) throw new ArgumentException("Unknown match type: " + layout); return Slots[index]; }
++
++        /// <summary>
++        /// Reads the match types to keep moving from match_card_types.txt in the app
++        /// folder (one layout name per line, # comments). Absent file: the default set.
++        /// An unknown, duplicate or over-limit selection changes nothing.
++        /// </summary>
++        public static IReadOnlyList<string> ReadSelection(string appRoot)
++        {
++            int movieLimit;
++            return ReadSelection(appRoot, out movieLimit);
++        }
++
++        /// <summary>
++        /// Also reports the plugin's movie limit: 16, or 120 after an explicit
++        /// "plugin_limit 120" line for the installed capacity companion.
++        /// </summary>
++        public static IReadOnlyList<string> ReadSelection(string appRoot, out int movieLimit)
++        {
++            movieLimit = PluginMovieLimit;
++            string path = Path.Combine(appRoot, SelectionFile);
++            if (!File.Exists(path)) return DefaultLayouts;
++            var selected = new List<string>();
++            bool limitSet = false;
++            foreach (string raw in File.ReadAllLines(path))
++            {
++                int comment = raw.IndexOf('#');
++                string line = (comment >= 0 ? raw.Substring(0, comment) : raw).Trim();
++                if (line.Length == 0) continue;
++                if (line.StartsWith(LimitDirective, StringComparison.OrdinalIgnoreCase))
++                {
++                    string value = line.Substring(LimitDirective.Length).Trim();
++                    if (limitSet) throw new InvalidDataException(SelectionFile + " sets " + LimitDirective + " twice.");
++                    if (value == "16") movieLimit = PluginMovieLimit;
++                    else if (value == "120") movieLimit = CompanionMovieLimit;
++                    else throw new InvalidDataException(SelectionFile + ": " + LimitDirective + " must be 16 (original plugin) or 120 (with the capacity companion), not " + value + ".");
++                    limitSet = true;
++                    continue;
++                }
++                string layout = Layouts.FirstOrDefault(name => string.Equals(name, line, StringComparison.OrdinalIgnoreCase));
++                if (layout == null) throw new InvalidDataException(SelectionFile + " names an unknown match type: " + line + ". Known types: " + string.Join(", ", Layouts) + ".");
++                if (selected.Contains(layout)) throw new InvalidDataException(SelectionFile + " lists " + layout + " twice.");
++                selected.Add(layout);
++            }
++            if (selected.Count == 0) throw new InvalidDataException(SelectionFile + " lists no match types.");
++            int clips = selected.Sum(SlotCount), maxClips = movieLimit - 2;
++            if (clips > maxClips)
++                throw new InvalidDataException(SelectionFile + " needs " + clips + " portrait movies per card; the Moving Renders plugin plays at most " + maxClips
++                    + " beside a card's background movies" + (movieLimit == PluginMovieLimit ? " unless the capacity companion is installed and \"" + LimitDirective + " 120\" is added" : "")
++                    + ". Remove some match types; no layout files were changed.");
++            return selected.AsReadOnly();
++        }
++
+         public static MatchCardLayoutsReport Apply(string appRoot, string discoveryRoot, bool checkOnly)
+         {
+             return Apply(appRoot, discoveryRoot, checkOnly, null);
+@@ -98,6 +170,10 @@ namespace GorillaStudio.NameFolders
+                 if (template.ByteField(movie, 2) != 7 || template.ByteField(movie, 51) != 1)
+                     throw new InvalidDataException("The supplied match-card movie template is not a playing movie layer.");
+                 byte[] placeholder = ValidatePlaceholders(appRoot);
++                int movieLimit;
++                var selected = new HashSet<string>(ReadSelection(appRoot, out movieLimit));
++                report.SelectedLayouts = Layouts.Where(selected.Contains).ToArray();
++                report.MovieLimit = movieLimit;
+                 var files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                 var knownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                 var explicitFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+@@ -137,17 +213,18 @@ namespace GorillaStudio.NameFolders
+                         relevant = true;
+                         report.Projects.Add(project);
+                         if (HasPlayerGroups(source, explicitScreen)) recognized++;
+-                        int added, repaired, checkedSlots; List<string> unsupported;
+-                        byte[] patched = Patch(source, template, movie, explicitScreen, out added, out repaired, out checkedSlots, out unsupported);
++                        int added, repaired, stripped, checkedSlots; List<string> unsupported;
++                        byte[] patched = Patch(source, template, movie, explicitScreen, selected, movieLimit, out added, out repaired, out stripped, out checkedSlots, out unsupported);
+                         report.CheckedSlots += checkedSlots;
+                         project.CheckedSlots = checkedSlots;
+                         project.MissingSlots = checkOnly ? added : 0;
+                         project.RepairSlots = checkOnly ? repaired : 0;
++                        project.ExtraSlots = checkOnly ? stripped : 0;
+                         project.Issues.AddRange(unsupported);
+                         foreach (string message in unsupported) report.Unsupported.Add(Relative(root, file) + ": " + message);
+-                        if (added == 0 && repaired == 0) { if (unsupported.Count == 0) report.Already++; continue; }
++                        if (added == 0 && repaired == 0 && stripped == 0) { if (unsupported.Count == 0) report.Already++; continue; }
+                         if (!checkOnly) ReplaceBackedUp(root, file, original, patched, report);
+-                        report.Patched++; report.AddedSlots += added; report.RepairedSlots += repaired; report.BakeRequired = true;
++                        report.Patched++; report.AddedSlots += added; report.RepairedSlots += repaired; report.StrippedSlots += stripped; report.BakeRequired = true;
+                     }
+                     catch (Exception error) when (Expected(error))
+                     {
+@@ -227,16 +304,17 @@ namespace GorillaStudio.NameFolders
+             return source.Nodes.Any(node => Layouts.Any(layout => PlayerGroup(node, layout, explicitScreen)));
+         }
+ 
+-        private static byte[] Patch(Screen source, Screen template, int movie, bool explicitScreen,
+-            out int added, out int repaired, out int checkedSlots, out List<string> unsupported)
++        private static byte[] Patch(Screen source, Screen template, int movie, bool explicitScreen, HashSet<string> selected, int movieLimit,
++            out int added, out int repaired, out int stripped, out int checkedSlots, out List<string> unsupported)
+         {
+-            added = 0; repaired = 0; checkedSlots = 0; unsupported = new List<string>();
++            added = 0; repaired = 0; stripped = 0; checkedSlots = 0; unsupported = new List<string>();
+             if (!HasPlayerGroups(source, explicitScreen))
+                 unsupported.Add("No supported match-up player-slot groups were found; left unchanged.");
+             var clone = new Copier(source.Bytes);
+             var changes = new HashSet<int>();
+             for (int layout = 0; layout < Layouts.Length; layout++)
+             {
++                bool wanted = selected.Contains(Layouts[layout]);
+                 var containers = source.Nodes.Where(node => PlayerGroup(node, Layouts[layout], explicitScreen)).GroupBy(node => node.Parent);
+                 foreach (var container in containers)
+                 {
+@@ -244,13 +322,40 @@ namespace GorillaStudio.NameFolders
+                     string label = string.Join("/", groups[0].Path.Take(groups[0].Path.Count - 1));
+                     if (groups.Count != Slots[layout] || Enumerable.Range(1, Slots[layout]).Any(player => groups.Count(node => node.Path.Last() == player + "P") != 1))
+                     { unsupported.Add(label + " has an unexpected player-slot structure; left unchanged."); continue; }
+-                    checkedSlots += groups.Count;
++                    if (wanted) checkedSlots += groups.Count;
+                     foreach (Node group in groups)
+                     {
+                         int[] children = source.Children(group.Position);
+                         string[] names = children.Select(source.Name).ToArray();
+                         int player = int.Parse(group.Path.Last().Substring(0, 1), CultureInfo.InvariantCulture);
+                         int[] existingMovies = children.Where(child => source.Name(child) == "GM_clip").ToArray();
++                        if (!wanted)
++                        {
++                            if (existingMovies.Length == 0) continue;
++                            // Only a layer this setup recipe owns is removed; the still
++                            // portrait returns to its unmarked 1.0 scale.
++                            if (existingMovies.Length != 1 || !ExpectedMovie(source, existingMovies[0], layout, player) || children.Length != 3
++                                || names[0] != "CAS_dummy" || names[1] != "SS_dummy" || names[2] != "GM_clip"
++                                || source.ByteField(children[0], 2) != 2 || source.ByteField(children[1], 2) != 2
++                                || children.Any(child => !EmptyNodeLists(source, child)))
++                            {
++                                unsupported.Add(string.Join("/", group.Path) + ": a custom movie layer outside the chosen match types was left unchanged; it still counts toward the plugin's movie limit.");
++                                continue;
++                            }
++                            try
++                            {
++                                int vector = clone.Allocate(12); clone.Put32(vector, 2);
++                                int cas = clone.Table(source, children[0], true);
++                                int still = clone.Table(source, children[1], true);
++                                clone.Floats(still, 5, 1f, 1f);
++                                clone.Point(vector + 4, cas); clone.Point(vector + 8, still);
++                                int childField = source.Field(group.Position, 55); clone.Point(childField, vector);
++                                changes.Add(childField);
++                                stripped++;
++                            }
++                            catch (InvalidDataException error) { unsupported.Add(string.Join("/", group.Path) + ": " + error.Message); }
++                            continue;
++                        }
+                         bool repairExisting = existingMovies.Length > 0;
+                         if (existingMovies.Length > 0)
+                         {
+@@ -294,7 +399,7 @@ namespace GorillaStudio.NameFolders
+                     }
+                 }
+             }
+-            if (added == 0 && repaired == 0) return source.Bytes;
++            if (added == 0 && repaired == 0 && stripped == 0) { WarnOverLimit(source, movieLimit, unsupported); return source.Bytes; }
+             byte[] result = clone.Result();
+             // Existing bytes can change only in the original group's child-vector
+             // pointer; all replacement nodes, strings and scalar tables are appended.
+@@ -306,16 +411,43 @@ namespace GorillaStudio.NameFolders
+             foreach (Node group in verified.Nodes.Where(node => node.Position < source.Bytes.Length && changes.Contains(source.Field(node.Position, 55))))
+             {
+                 int[] children = verified.Children(group.Position);
+-                if (children.Length != 3 || verified.Name(children[2]) != "GM_clip" || verified.ByteField(children[2], 2) != 7 || verified.ByteField(children[2], 51) != 1)
+-                    throw new InvalidDataException("The completed slot did not retain its playing movie layer.");
+                 int layout = Array.IndexOf(Layouts, group.Path[group.Path.Count - 2]);
+                 int player = int.Parse(group.Path.Last().Substring(0, 1), CultureInfo.InvariantCulture);
++                if (!selected.Contains(Layouts[layout]))
++                {
++                    if (children.Length != 2 || verified.Name(children[0]) != "CAS_dummy" || verified.Name(children[1]) != "SS_dummy"
++                        || !ExpectedFloats(verified, children[1], 5, 1f, 1f))
++                        throw new InvalidDataException("A removed slot did not return to its plain still portrait.");
++                    continue;
++                }
++                if (children.Length != 3 || verified.Name(children[2]) != "GM_clip" || verified.ByteField(children[2], 2) != 7 || verified.ByteField(children[2], 51) != 1)
++                    throw new InvalidDataException("The completed slot did not retain its playing movie layer.");
+                 if (!ExpectedMarker(verified, children[1], layout, player) || !ExpectedTransform(verified, children[2]))
+                     throw new InvalidDataException("The completed slot did not retain its exact plugin marker and movie transform.");
+             }
++            int limit = movieLimit - OtherMovies(verified), clips = Clips(verified);
++            if (clips > limit)
++            {
++                // Writing an over-limit card would silently cost its working portraits.
++                unsupported.Add("The chosen match types need " + clips + " portrait movies on this card, but the plugin can play only " + limit
++                    + " beside its " + (movieLimit - limit) + " background movie(s); remove some match types. Left unchanged.");
++                added = 0; repaired = 0; stripped = 0;
++                return source.Bytes;
++            }
+             return result;
+         }
+ 
++        private static int Clips(Screen screen) { return screen.Nodes.Count(node => node.Path.Last() == "GM_clip"); }
++        private static int OtherMovies(Screen screen) { return screen.Nodes.Count(node => node.Path.Last() != "GM_clip" && screen.ByteField(node.Position, 2) == 7); }
++
++        private static void WarnOverLimit(Screen source, int movieLimit, List<string> unsupported)
++        {
++            int limit = movieLimit - OtherMovies(source), clips = Clips(source);
++            if (clips > limit)
++                unsupported.Add("This card has " + clips + " portrait movies, but the plugin can play only " + limit
++                    + " beside its background movie(s); portraits beyond the limit will not move.");
++        }
++
+         private static bool ExpectedMovie(Screen source, int movie, int layout, int player)
+         {
+             if (source.ByteField(movie, 2) != 7 || source.ByteField(movie, 51) != 1) return false;

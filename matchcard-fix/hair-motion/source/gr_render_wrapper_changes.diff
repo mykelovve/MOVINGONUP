@@ -1,0 +1,50 @@
+diff --git a/runtime/engine/gr_render.py b/runtime/engine/gr_render.py
+index fd694dc..1360a11 100644
+--- a/runtime/engine/gr_render.py
++++ b/runtime/engine/gr_render.py
+@@ -955,12 +955,55 @@ _GEOMETRY_BUNDLE = {
+         'hAzEP1XX2c5zmdZhNOTijkcK1P3/8RigZx29hpFXV01j9dl76qAnxJ1tCDv6gqL5BhiaRcN14mT4D47Y/meIxXMz7OdtPYNuGfDe'
+         'UUTLME7Cf8cj3GGFh4qjB2oIsIoHQVicWP399l7DjRwext2+dGjgkLU32uzbHey4L/udFJun/wMJvzzm'
+     ),
++    'gorilla_hair_motion': ('2bb3dbcccb04d4494b50c0be08f343e85d5b74835eb112c272c8b4570ffecf39',
++    ),
+ }
+ # END GENERATED GEOMETRY BUNDLE
+ 
+ 
+ def _load_geometry_bundle():
+     """Keep the existing eleven-file updater format self-contained."""
++    if getattr(_load_geometry_bundle, "loaded", False):
++        return
+     import base64
+     import hashlib
+     import types
+@@ -974,6 +1017,7 @@ def _load_geometry_bundle():
+         module.__file__ = __file__
+         sys.modules[name] = module
+         exec(compile(source, __file__ + ":" + name, "exec"), module.__dict__)
++    _load_geometry_bundle.loaded = True
+ 
+ 
+ def _renderer_options():
+@@ -987,7 +1031,20 @@ def _original_renderer():
+     import gr_render  # noqa: E402,F401 -- the original compiled renderer
+ 
+ 
++def _register_hair_motion():
++    # Opt-in through engine/hair_motion.cfg; independent of the geometry revision.
++    if not os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "hair_motion.cfg")):
++        return
++    try:
++        _load_geometry_bundle()
++        import gorilla_hair_motion
++        gorilla_hair_motion.register(os.path.dirname(os.path.abspath(__file__)))
++    except Exception as error:
++        print("  hair motion: unavailable:", str(error), flush=True)
++
++
+ def _run_renderer():
++    _register_hair_motion()
+     if os.environ.get("GORILLA_GEOMETRY_REVISION") != "1":
+         return _original_renderer()
+     _load_geometry_bundle()

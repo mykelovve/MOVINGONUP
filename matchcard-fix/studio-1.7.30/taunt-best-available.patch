@@ -1,0 +1,152 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs b/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
+index 574ddb5..d24d503 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
+@@ -12,11 +12,22 @@ using System.Threading.Tasks;
+ namespace GorillaStudio.NameFolders
+ {
+     /// <summary>Recovers exact requested motion records from indexed game/mod archives, into the application cache only.</summary>
++    public enum DiscoveryMotionSourcePolicy
++    {
++        /// <summary>Use a motion only when every archive is readable and all copies agree.</summary>
++        Strict,
++        /// <summary>Use what is found; differing copies resolve to mods, then the newest game patch.</summary>
++        BestAvailable,
++    }
++
+     public static class DiscoveryArchiveMotions
+     {
++        // Unreadable mod CAKs are common, and under Strict any one of them hid every
++        // archive taunt. BestAvailable keeps the found motions and reports its picks.
++        public static DiscoveryMotionSourcePolicy Policy { get; set; } = DiscoveryMotionSourcePolicy.BestAvailable;
+         private const long MaximumFileBytes = 256L * 1024 * 1024;
+         private const long MaximumRetainedBytes = 256L * 1024 * 1024;
+-        private const int MaximumCandidates = 4096;
++        private const int MaximumCandidates = 16384;
+         private const int MaximumRecordBytes = 128 * 1024 * 1024;
+         private static readonly Regex Canonical = new Regex(@"\A[0-9]{1,10}a[0-9]{3,6}\z", RegexOptions.CultureInvariant);
+         private static readonly Regex Area = new Regex(@"(?:^|/)MotionArea_([0-9]+)_([0-9]+)\.(?:clips|clip)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+@@ -160,7 +171,10 @@ namespace GorillaStudio.NameFolders
+                                 string sha = HashBytes(bytes);
+                                 Tuple<DiscoveryMotionAsset, string> previous;
+                                 if (local.TryGetValue(pair.Key, out previous) && previous.Item2 != sha)
+-                                { Conflict(pair.Key, accepted, conflicts, result); local.Remove(pair.Key); break; }
++                                {
++                                    if (Policy == DiscoveryMotionSourcePolicy.BestAvailable) break; // Keep this container's first record.
++                                    Conflict(pair.Key, accepted, conflicts, result); local.Remove(pair.Key); break;
++                                }
+                                 string output = Path.Combine(directory, pair.Key + ".clip");
+                                 Retain(output, bytes.Length, retainedPaths, ref retainedBytes);
+                                 writtenRecords.Add(output);
+@@ -184,7 +198,8 @@ namespace GorillaStudio.NameFolders
+                 catch (Exception error) when (Expected(error))
+                 { result.Incomplete = true; result.Warnings.Add("Could not read archive motion " + candidate.Path + ": " + error.Message); }
+             }
+-            ApplyCoverage(requested, accepted, coverage, conflicts, result);
++            bool strict = Policy == DiscoveryMotionSourcePolicy.Strict;
++            if (strict) ApplyCoverage(requested, accepted, coverage, conflicts, result);
+             // Negative catalogs and byte-identical aliases are evidence too. If
+             // any indexed source changed after its scan, it may now contain an
+             // active override even when the selected positive source is stable.
+@@ -200,14 +215,23 @@ namespace GorillaStudio.NameFolders
+             // A skipped or unreadable motion source may contain a second payload
+             // for any requested ID. Archive load order is unknown: uncertainty is
+             // not permission to install the first apparently matching stock clip.
+-            if (result.Incomplete)
++            if (result.Incomplete && strict)
+             {
+                 foreach (string clip in accepted.Keys)
+                     if (!result.Issues.ContainsKey(clip)) result.Issues[clip] = "The motion matched, but another motion source was unreadable, ambiguous or budget-limited. Its active override cannot be ruled out; export the active .clip into Discovery data or resolve the archive warning and retry.";
+                 accepted.Clear();
+             }
+             token.ThrowIfCancellationRequested();
+-            foreach (var pair in accepted) result.Assets[pair.Key] = pair.Value[0].Asset;
++            int picked = 0;
++            foreach (var pair in accepted)
++            {
++                if (strict || pair.Value.Count == 1) { result.Assets[pair.Key] = pair.Value[0].Asset; continue; }
++                Accepted winner = pair.Value.OrderByDescending(SourceRank).First();
++                if (pair.Value.Select(value => value.Sha).Distinct(StringComparer.Ordinal).Skip(1).Any()) picked++;
++                result.Assets[pair.Key] = winner.Asset;
++            }
++            if (picked > 0)
++                result.Warnings.Add(picked + " taunt animation(s) exist in several archives with different versions; Studio used the mod version first, then the newest game patch (bakedfile with the highest number).");
+             foreach (string clip in clips)
+                 if (!result.Assets.ContainsKey(clip) && !result.Issues.ContainsKey(clip))
+                     result.Issues[clip] = lookup.ArchiveCount == 0
+@@ -406,6 +430,27 @@ namespace GorillaStudio.NameFolders
+             retained.Add(path); bytes += length;
+         }
+ 
++        // Mods override the base game; among base archives the highest bakedfile
++        // number is the newest patch; among mods the most recently written file wins.
++        private static Tuple<int, long, string> SourceRank(Accepted value)
++        {
++            string path = value.Index.ArchivePath ?? "";
++            string normalized = path.Replace('\\', '/');
++            bool mod = normalized.IndexOf("/mods/", StringComparison.OrdinalIgnoreCase) >= 0;
++            long order = 0;
++            if (mod)
++            {
++                try { order = File.GetLastWriteTimeUtc(path).Ticks; }
++                catch (Exception) { order = 0; } // Ordering only; an unreadable date ranks oldest.
++            }
++            else
++            {
++                Match baked = Regex.Match(Path.GetFileName(path), @"bakedfile0*([0-9]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
++                if (baked.Success) long.TryParse(baked.Groups[1].Value, out order);
++            }
++            return Tuple.Create(mod ? 1 : 0, order, path.ToLowerInvariant());
++        }
++
+         private static void Conflict(string clip, Dictionary<string, List<Accepted>> accepted, HashSet<string> conflicts, DiscoveryMotionFallbacks result)
+         {
+             accepted.Remove(clip); conflicts.Add(clip);
+diff --git a/tests/DiscoveryArchiveMotionsTests/Program.cs b/tests/DiscoveryArchiveMotionsTests/Program.cs
+index 258b692..63e70c5 100644
+--- a/tests/DiscoveryArchiveMotionsTests/Program.cs
++++ b/tests/DiscoveryArchiveMotionsTests/Program.cs
+@@ -26,6 +26,7 @@ internal static class Program
+ 
+     private static async Task Main()
+     {
++        DiscoveryArchiveMotions.Policy = DiscoveryMotionSourcePolicy.Strict;
+         root = Path.Combine(Path.GetTempPath(), "gorilla-motion-archives-" + Guid.NewGuid().ToString("N"));
+         app = Path.Combine(root, "app"); game = Path.Combine(root, "game"); data = Path.Combine(root, "Discovery data"); cache = Path.Combine(root, "cache");
+         Directory.CreateDirectory(game); Directory.CreateDirectory(data);
+@@ -256,6 +257,35 @@ internal static class Program
+             }
+             cancelExtraction = false;
+             Equal("Canceled lookup cleans extraction scratch", 0, Directory.GetDirectories(cache, "extract-*", SearchOption.AllDirectories).Length);
++
++            // BestAvailable: found motions are kept and differing copies resolve by precedence.
++            DiscoveryArchiveMotions.Policy = DiscoveryMotionSourcePolicy.BestAvailable;
++            indexes.Clear(); payloads.Clear(); unreadableArchive = null;
++            foreach (string folder in new[] { Path.Combine(game, "cakes"), Path.Combine(game, "mods") }) if (Directory.Exists(folder)) Directory.Delete(folder, true);
++            string area = "Animation/Acts/Basic/MotionArea_62500_62600.clips";
++            byte[] patchOne = (byte[])actual.Clone(); patchOne[patchOne.Length - 1] ^= 1;
++            byte[] patchThree = (byte[])actual.Clone(); patchThree[patchThree.Length - 1] ^= 2;
++            string baked1 = AddArchive("bakedfile01.cak", area, Container(patchOne));
++            string baked3 = AddArchive("bakedfile03.cak", area, Container(patchThree));
++            result = await Find(Clip);
++            Equal("Best available recovers a clip whose game patches differ", true, result.Assets.ContainsKey(Clip) && !result.Issues.ContainsKey(Clip));
++            Equal("The newest game patch wins", true, patchThree.SequenceEqual(result.Assets[Clip].Read()));
++            Equal("The pick is reported", true, result.Warnings.Any(x => x.Contains("several archives") && x.Contains("newest game patch")));
++            string mod = Path.Combine(game, "mods", "my_taunts.cak"); Write(mod, new byte[] { 12 });
++            indexes[mod] = new[] { Line(area) }; payloads[mod + "|" + area] = Container(actual);
++            result = await Find(Clip);
++            Equal("A mod version overrides the base game", true, actual.SequenceEqual(result.Assets[Clip].Read()));
++            File.Delete(mod); indexes.Remove(mod);
++            payloads[baked1 + "|" + area] = Container(); File.AppendAllText(baked1, " coverage gap");
++            result = await Find(Clip);
++            Equal("A clip only the newer patch contains is recovered", true, result.Assets.ContainsKey(Clip) && patchThree.SequenceEqual(result.Assets[Clip].Read()));
++            File.AppendAllText(baked1, " unreadable"); unreadableArchive = baked1;
++            result = await Find(Clip); unreadableArchive = null;
++            Equal("An unreadable archive no longer hides every found motion", true, result.Assets.ContainsKey(Clip) && result.Incomplete);
++            Equal("The unreadable archive is still reported", true, result.Warnings.Any(x => x.Contains("fixture cannot read this archive")));
++            result = await Find(Missing);
++            Equal("A clip absent everywhere stays unavailable", true, !result.Assets.ContainsKey(Missing) && result.Issues.ContainsKey(Missing));
++            DiscoveryArchiveMotions.Policy = DiscoveryMotionSourcePolicy.Strict;
+             Console.WriteLine("PASS " + checks + " Discovery archive motion checks");
+         }
+         finally { Directory.Delete(root, true); }

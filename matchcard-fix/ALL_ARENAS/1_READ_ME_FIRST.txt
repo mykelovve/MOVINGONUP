@@ -1,5 +1,5 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 168 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 162 cards checked.
 
 WHAT'S INSIDE
   TITAVUSREVATCHCARD\   153 known-working cards at their exact game paths
@@ -11,8 +11,7 @@ WHAT'S INSIDE
                         Grand Slam Australia, Double Or Nothing, Forbidden Door, All Out, WrestleDream,
                         Full Gear, Worlds End)
                         + placeholder movies
-  by_name\              14 cards whose folder is found by file name on your PC:
-                        AEW 2025 (All Out, DoN, Forbidden Door, Full Gear, Worlds End, WrestleDream),
+  by_name\              8 cards whose folder is found by file name on your PC:
                         ROH 26, All Out 19, WCW Nitro,
                         Grand Slam MX 26, Spring Break X, SNME 46,
                         matchup_saturday, matchup_sunday

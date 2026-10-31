@@ -2,7 +2,7 @@ ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
 Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 169 cards checked.
 
 WHAT'S INSIDE
-  TITAVUSREVATCHCARD\   164 known-working cards at their exact game paths
+  TITAVUSREVATCHCARD\   165 known-working cards at their exact game paths
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
                         SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2,
                         Jericho Cruise, All In 18 (ROH), SNME 41,
@@ -12,7 +12,8 @@ WHAT'S INSIDE
                         Full Gear, Worlds End;
                         All In 2026 NIGHT from titavius_aew_2026_extended.cak;
                         Grand Slam MX 26, Spring Break X (TxM Project Indy),
-                        ECW on TNN (titavius_ecw), Clash in Italy (Rev))
+                        ECW on TNN (titavius_ecw), Clash in Italy (Rev),
+                        SNME XLII Last Cena (John Cena arenas 2025))
                         + placeholder movies
   by_name\              6 cards whose folder is found by file name on your PC:
                         ROH 26, All Out 19, WCW Nitro,
@@ -35,4 +36,4 @@ INSTALL
 4. Any "SKIPPED" line, or the list of card folders "not in discovery_data": send it to me.
 5. Bake TITAVUSREVATCHCARD once, keep only the newest TITAVUSREVATCHCARD .cak in mods, restart WWE.
 
-Still missing: SATURDAY NIGHT'S MAIN EVENT XLII (send its matchup .jsfb + path).
+All arenas Studio reported are now covered.

@@ -1,5 +1,5 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 168 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 169 cards checked.
 
 WHAT'S INSIDE
   TITAVUSREVATCHCARD\   159 known-working cards at their exact game paths
@@ -11,10 +11,10 @@ WHAT'S INSIDE
                         Grand Slam Australia, Double Or Nothing, Forbidden Door, All Out, WrestleDream,
                         Full Gear, Worlds End)
                         + placeholder movies
-  by_name\              8 cards whose folder is found by file name on your PC:
+  by_name\              9 cards whose folder is found by file name on your PC:
                         ROH 26, All Out 19, WCW Nitro,
                         Grand Slam MX 26, Spring Break X, SNME 46,
-                        matchup_saturday, matchup_sunday
+                        matchup_saturday, matchup_sunday, matchup_allin_26 (All In 2026)
   manual\               1 card (unnamed card from UIFIXES) - its file is just "matchup.jsfb",
                         so it can't be found by name; put it in its original folder by hand
   Install_All_Match_Cards.ps1

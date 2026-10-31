@@ -6,7 +6,10 @@ WHAT'S INSIDE
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
                         SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2,
                         Jericho Cruise, All In 18 (ROH), SNME 41,
-                        Lucha Underground) + placeholder movies
+                        Lucha Underground,
+                        AEW 2025 from titavius_aew_2025.cak at Arena\Titavius\8xx_-_AEW_..._2025\Interface\Matchup:
+                        Double Or Nothing, Forbidden Door, All Out, WrestleDream, Full Gear, Worlds End)
+                        + placeholder movies
   by_name\              14 cards whose folder is found by file name on your PC:
                         AEW 2025 (All Out, DoN, Forbidden Door, Full Gear, Worlds End, WrestleDream),
                         ROH 26, All Out 19, WCW Nitro,

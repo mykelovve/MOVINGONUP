@@ -1,14 +1,15 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 162 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 164 cards checked.
 
 WHAT'S INSIDE
   TITAVUSREVATCHCARD\   147 known-working cards at their exact game paths
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
                         SummerSlam 2026, Night of Champions 2026) + placeholder movies
-  by_name\              14 cards whose folder is found by file name on your PC:
+  by_name\              16 cards whose folder is found by file name on your PC:
                         AEW 2025 (All Out, DoN, Forbidden Door, Full Gear, Worlds End, WrestleDream),
                         All In 18, ROH 26, All Out 19, WCW Nitro, Lucha Underground,
-                        Grand Slam MX 26, Spring Break X, SNME 46
+                        Grand Slam MX 26, Spring Break X, SNME 46,
+                        matchup_saturday, matchup_sunday
   manual\               1 card (unnamed card from UIFIXES) - its file is just "matchup.jsfb",
                         so it can't be found by name; put it in its original folder by hand
   Install_All_Match_Cards.ps1

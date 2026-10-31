@@ -10,6 +10,9 @@ WHAT'S INSIDE
                         AEW 2025 from titavius_aew_2025.cak at Arena\Titavius\8xx_-_AEW_..._2025\Interface\Matchup:
                         Grand Slam Australia, Double Or Nothing, Forbidden Door, All Out, WrestleDream,
                         Full Gear, Worlds End;
+                        stand-ins (no card of their own; copies under the likely file names):
+                        Dynasty 2025 = Dynasty 2026 card, Revolution 2025 = Revolution 2026 card,
+                        Title Tuesday 2025 = Dynamite card;
                         All In 2026 NIGHT from titavius_aew_2026_extended.cak;
                         Grand Slam MX 26, Spring Break X (TxM Project Indy),
                         ECW on TNN (titavius_ecw), Clash in Italy (Rev),

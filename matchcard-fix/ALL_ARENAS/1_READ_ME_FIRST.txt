@@ -24,7 +24,9 @@ INSTALL
    If PowerShell refuses: open PowerShell as Administrator, run
       Set-ExecutionPolicy -Scope Process Bypass
    then drag the .ps1 into that window and press Enter.
-4. Any "SKIPPED" line: send it to me.
+   NEW: it also copies each card's graphics (bg/fg movies, logos, textures that sit in the
+   same folder as the card in discovery_data) into the bake, so arenas keep their graphics.
+4. Any "SKIPPED" line, or the list of card folders "not in discovery_data": send it to me.
 5. Bake TITAVUSREVATCHCARD once, keep only the newest TITAVUSREVATCHCARD .cak in mods, restart WWE.
 
 Still missing: SATURDAY NIGHT'S MAIN EVENT XLII (send its matchup .jsfb + path).

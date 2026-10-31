@@ -65,5 +65,33 @@ foreach ($card in Get-ChildItem $byName -Recurse -Filter *.jsfb -File) {
     $placed++
 }
 Write-Host "Cards placed by name: $placed"
+
+# 4. Graphics that sit next to each card (bg/fg movies, logos, textures). A card's folder in
+#    this bake replaces the arena's own folder, so those files must be baked with the card.
+$graphics = 0
+$cardDirs = Get-ChildItem $bake -Recurse -Filter *.jsfb -File | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique
+foreach ($dir in $cardDirs) {
+    $rel = $dir.Substring($bake.Length).TrimStart("\")
+    $from = Join-Path $data $rel
+    if (-not (Test-Path $from)) { continue }
+    Get-ChildItem $from -Recurse -File |
+        Where-Object { $_.Extension -ne ".jsfb" -and $_.Extension -ne ".bak" -and $_.FullName -notlike "*Gorilla Studio Layout Backups*" } |
+        ForEach-Object {
+            $out = Join-Path $dir $_.FullName.Substring($from.Length + 1)
+            if (-not (Test-Path $out)) {
+                New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
+                Copy-Item $_.FullName $out
+                $graphics++
+            }
+        }
+}
+Write-Host "Card graphics copied from discovery_data: $graphics"
+$missing = @($cardDirs | Where-Object { -not (Test-Path (Join-Path $data $_.Substring($bake.Length).TrimStart("\"))) })
+if ($missing.Count -gt 0) {
+    Write-Host ""
+    Write-Host "These card folders are not in discovery_data, so their graphics could not be copied."
+    Write-Host "Their arenas only live inside a mod .cak; send me this list:"
+    $missing | ForEach-Object { Write-Host "    $($_.Substring($bake.Length).TrimStart('\'))" }
+}
 Write-Host ""
 Write-Host "Done. Now bake TITAVUSREVATCHCARD once, keep only the newest TITAVUSREVATCHCARD .cak in mods, restart WWE."

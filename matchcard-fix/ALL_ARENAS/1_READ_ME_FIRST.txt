@@ -1,5 +1,5 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 169 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 179 cards checked.
 
 WHAT'S INSIDE
   TITAVUSREVATCHCARD\   178 known-working cards at their exact game paths
@@ -19,8 +19,7 @@ WHAT'S INSIDE
                         WCW Nitro 2000 + Road Wild 1997 (titavius_wcw), Royal Rumble 2026 (Rev),
                         SmackDown + RAW Madison Square Garden (Rev))
                         + placeholder movies
-  by_name\              1 card whose folder is found by file name on your PC:
-                        SNME 46
+  by_name\              (empty - every card is now at its exact path)
   manual\               1 card (unnamed card from UIFIXES) - its file is just "matchup.jsfb",
                         so it can't be found by name; put it in its original folder by hand
   Install_All_Match_Cards.ps1

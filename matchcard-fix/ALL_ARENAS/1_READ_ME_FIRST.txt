@@ -2,7 +2,7 @@ ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
 Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 169 cards checked.
 
 WHAT'S INSIDE
-  TITAVUSREVATCHCARD\   171 known-working cards at their exact game paths
+  TITAVUSREVATCHCARD\   172 known-working cards at their exact game paths
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
                         SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2,
                         Jericho Cruise, All In 18 + Ring of Honor 26 (ROH), SNME 41,
@@ -15,10 +15,10 @@ WHAT'S INSIDE
                         ECW on TNN (titavius_ecw), Clash in Italy (Rev),
                         SNME XLII Last Cena (John Cena arenas 2025), MLW Fusion,
                         All Out 2019 (titavius_aew_classic), WrestleMania 24 (Rev),
-                        WrestleMania 42 Saturday + Sunday (wrestlemania_42_mf))
+                        WrestleMania 42 Saturday + Sunday (wrestlemania_42_mf),
+                        WCW Nitro 2000 (titavius_wcw))
                         + placeholder movies
-  by_name\              2 cards whose folder is found by file name on your PC:
-                        WCW Nitro,
+  by_name\              1 card whose folder is found by file name on your PC:
                         SNME 46
   manual\               1 card (unnamed card from UIFIXES) - its file is just "matchup.jsfb",
                         so it can't be found by name; put it in its original folder by hand

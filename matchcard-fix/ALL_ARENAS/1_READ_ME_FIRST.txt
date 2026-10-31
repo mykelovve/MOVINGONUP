@@ -1,8 +1,8 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 162 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 168 cards checked.
 
 WHAT'S INSIDE
-  TITAVUSREVATCHCARD\   153 known-working cards at their exact game paths
+  TITAVUSREVATCHCARD\   159 known-working cards at their exact game paths
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
                         SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2,
                         Jericho Cruise, All In 18 (ROH), SNME 41,

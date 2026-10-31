@@ -1,10 +1,11 @@
 ALL ARENAS - EVERY WORKING MOVING MATCH CARD IN ONE ZIP
-Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 165 cards checked.
+Moving types: 1on1, 2on2, triple threat, fatal 4-way. Every card <= 16 movies; all 166 cards checked.
 
 WHAT'S INSIDE
-  TITAVUSREVATCHCARD\   148 known-working cards at their exact game paths
+  TITAVUSREVATCHCARD\   149 known-working cards at their exact game paths
                         (Dynamite, Collision, AAA, WWE shows/matchups, Titavius AEW 2026,
-                        SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2) + placeholder movies
+                        SummerSlam 2026, Night of Champions 2026, SmackDown 2026 V2,
+                        Jericho Cruise) + placeholder movies
   by_name\              16 cards whose folder is found by file name on your PC:
                         AEW 2025 (All Out, DoN, Forbidden Door, Full Gear, Worlds End, WrestleDream),
                         All In 18, ROH 26, All Out 19, WCW Nitro, Lucha Underground,
@@ -25,4 +26,4 @@ INSTALL
 4. Any "SKIPPED" line: send it to me.
 5. Bake TITAVUSREVATCHCARD once, keep only the newest TITAVUSREVATCHCARD .cak in mods, restart WWE.
 
-Still missing: JERICRUISE AEW (its card goes at UI\Projects\ShowAssets\matchups\Jericruise.jsfb - send that file), SATURDAY NIGHT'S MAIN EVENT XLII.
+Still missing: SATURDAY NIGHT'S MAIN EVENT XLII (send its matchup .jsfb + path).

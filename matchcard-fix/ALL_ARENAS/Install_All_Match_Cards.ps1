@@ -47,9 +47,11 @@ $byName = Join-Path $here "by_name"
 $placed = 0
 foreach ($card in Get-ChildItem $byName -Recurse -Filter *.jsfb -File) {
     $hint = if ($card.DirectoryName -ne $byName) { Split-Path $card.DirectoryName -Leaf } else { $null }
+    # RAW_2026_V2 also matches "RAW 2026 V2", "Raw2026v2", ...
+    $pattern = if ($hint) { "*" + ($hint -replace "_", "*") + "*" } else { $null }
     $found = @(Get-ChildItem $data -Recurse -Filter $card.Name -File |
         Where-Object { $_.FullName -notlike "*Gorilla Studio Layout Backups*" -and
-                       (-not $hint -or $_.FullName -like "*$hint*") })
+                       (-not $pattern -or $_.FullName -like $pattern) })
     if ($found.Count -ne 1) {
         Write-Host "SKIPPED $($card.Name)$(if ($hint) { " ($hint)" }): found $($found.Count) original(s) in discovery_data - send me this line"
         $found | ForEach-Object { Write-Host "    $($_.FullName)" }

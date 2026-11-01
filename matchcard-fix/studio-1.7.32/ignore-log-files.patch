@@ -1,0 +1,55 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryTauntContextCache.cs b/src/GorillaStudio.NameFolders/DiscoveryTauntContextCache.cs
+index 8a61ce3..5eafb32 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryTauntContextCache.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryTauntContextCache.cs
+@@ -73,8 +73,21 @@ namespace GorillaStudio.NameFolders
+         private void Changed(object sender, FileSystemEventArgs args)
+         {
+             // Creation, removal and renaming may change a directory tree, even
+-            // when its name has a file extension. Never ignore those events.
+-            if (args.ChangeType != WatcherChangeTypes.Changed || Relevant(args.FullPath)) Invalidate();
++            // when its name has a file extension. Only plain files known not to
++            // be sources are ignored: the game, CakeHook and plugins keep writing
++            // logs and status files under the game folder while it runs.
++            var renamed = args as RenamedEventArgs;
++            if (Relevant(args.FullPath) || (renamed != null && Relevant(renamed.OldFullPath))) { Invalidate(); return; }
++            if (args.ChangeType == WatcherChangeTypes.Changed || Noise(args.FullPath)) return;
++            // A created or renamed entry that is now a plain file is not a source.
++            if (args.ChangeType != WatcherChangeTypes.Deleted && File.Exists(args.FullPath)) return;
++            Invalidate();
++        }
++
++        private static bool Noise(string path)
++        {
++            return new[] { ".txt", ".log", ".tmp", ".bak", ".old", ".ini", ".cfg", ".dmp", ".etl", ".png", ".jpg", ".bmp", ".dds" }
++                .Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+         }
+ 
+         private static bool Relevant(string path)
+diff --git a/tests/DiscoveryTauntRefreshTests/Program.cs b/tests/DiscoveryTauntRefreshTests/Program.cs
+index 6182f63..4ed977b 100644
+--- a/tests/DiscoveryTauntRefreshTests/Program.cs
++++ b/tests/DiscoveryTauntRefreshTests/Program.cs
+@@ -92,6 +92,22 @@ internal static class Program
+                 await Invalidated(cache, "A newly installed game archive invalidates the library");
+                 cache.CompleteRefresh(cache.BeginRefresh()); File.WriteAllText(Path.Combine(data, "CAMMoveData.jsfb"), "moves");
+                 await Invalidated(cache, "An updated moves table invalidates the library");
++                cache.CompleteRefresh(cache.BeginRefresh());
++                string plugins = Path.Combine(game, "Plugins"); Directory.CreateDirectory(plugins);
++                await Invalidated(cache, "A new folder under the game invalidates the library");
++                cache.CompleteRefresh(cache.BeginRefresh());
++                // Plugins, CakeHook and the game write logs and status files while
++                // WWE runs; those must not restart an animation import forever.
++                string status = Path.Combine(plugins, "_status.tmp");
++                File.WriteAllText(status, "status"); File.Move(status, Path.Combine(plugins, "_status.txt"));
++                File.AppendAllText(Path.Combine(game, "cakehook_load_report.txt"), "pass");
++                File.WriteAllText(Path.Combine(plugins, "AltBelts.log"), "log"); File.Delete(Path.Combine(plugins, "AltBelts.log"));
++                await Task.Delay(300);
++                Equal("Log and status files written while the game runs keep the library current", true, cache.CanReuse);
++                string renamedClip = Path.Combine(data, "renamed.clip"); File.WriteAllText(renamedClip, "motion");
++                await Invalidated(cache, "Adding a second extracted animation invalidates the library");
++                cache.CompleteRefresh(cache.BeginRefresh()); File.Move(renamedClip, renamedClip + ".txt");
++                await Invalidated(cache, "Renaming an animation away from its extension invalidates the library");
+                 cache.CompleteRefresh(cache.BeginRefresh()); cache.Invalidate();
+                 Equal("Explicit Refresh data retries even unchanged sources", false, cache.CanReuse);
+                 cache.CompleteRefresh(cache.BeginRefresh(), false);

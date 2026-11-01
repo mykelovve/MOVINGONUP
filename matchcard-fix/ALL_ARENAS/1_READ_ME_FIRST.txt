@@ -28,12 +28,23 @@ WHAT'S INSIDE
                         so it can't be found by name; put it in its original folder by hand
   Install_All_Match_Cards.ps1
 
-INSTALL
-1. Close WWE and Discovery. Back up your current TITAVUSREVATCHCARD .cak (just in case).
+INSTALL (clean rebuild - do this even if you installed an earlier zip)
+1. Close WWE and Discovery.
 2. Extract this zip anywhere (e.g. Desktop).
 3. Right-click Install_All_Match_Cards.ps1 > Run with PowerShell (as Administrator).
-   It also includes every card Studio's Game setup prepared, so nothing you set up is lost.
-   If PowerShell refuses: open PowerShell as Administrator, run
+   It RENAMES your current TITAVUSREVATCHCARD folder to TITAVUSREVATCHCARD_before_<date-time>
+   (a backup - nothing is deleted) and builds a fresh one with only:
+     - every card Studio's Game setup prepared in discovery_data
+     - every moving card in this zip, at its exact game path
+     - the placeholder movies
+   No other files go into the bake (the earlier "card graphics" copy step is removed).
+   At the end it prints: "Bake folder now holds: N cards, N placeholder movies, N other files".
+   "other files" should be 0.
+4. In mods: delete or move out EVERY old TITAVUSREVATCHCARD-*.cak.
+5. Bake TITAVUSREVATCHCARD once. Exactly one new TITAVUSREVATCHCARD .cak should appear in mods.
+6. Restart WWE. Test Dynamite first, then other arenas.
+
+If PowerShell refuses: open PowerShell as Administrator, run
       Set-ExecutionPolicy -Scope Process Bypass
    then drag the .ps1 into that window and press Enter.
    NEW: it also copies each card's graphics (bg/fg movies, logos, textures that sit in the

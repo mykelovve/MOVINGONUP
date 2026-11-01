@@ -1,0 +1,129 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryArchiveRenders.cs b/src/GorillaStudio.NameFolders/DiscoveryArchiveRenders.cs
+index 5dfd6f2..a2e3296 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryArchiveRenders.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryArchiveRenders.cs
+@@ -61,6 +61,9 @@ namespace GorillaStudio.NameFolders
+         // remain cancellable and run away from the UI thread.
+         private const int IndexTimeoutMilliseconds = 300000;
+         private const int ExtractTimeoutMilliseconds = 180000;
++        // Archive reader processes started together while building missing indexes.
++        private const int ParallelIndexReads = 4;
++        private const string UnreadableArchive = "The archive reader could not index ";
+         private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
+ 
+         internal static SemaphoreSlim AssetGate { get { return Gate; } }
+@@ -99,41 +102,81 @@ namespace GorillaStudio.NameFolders
+             string executable, toolKey;
+             try { executable = PrepareTool(appRoot, gameRoot, cache, out toolKey); }
+             catch (Exception error) when (IsFileError(error)) { result.Warnings.Add(error.Message); return result; }
+-            for (int i = 0; i < archives.Count; i++)
++            // Archives without a cached index are read a few at a time; results keep
++            // the archive order because later lookups rank sources by that order.
++            var indexes = new DiscoveryArchiveLookupIndex[archives.Count];
++            var warnings = new string[archives.Count];
++            int finished = 0;
++            using (var slots = new SemaphoreSlim(ParallelIndexReads, ParallelIndexReads))
+             {
+-                token.ThrowIfCancellationRequested();
+-                var archive = archives[i];
+-                Report(progress, "Reading linked Discovery assets: archive " + (i + 1) + " of " + archives.Count + "…");
+-                try
++                var reads = new List<Task>();
++                for (int i = 0; i < archives.Count; i++)
+                 {
+-                    archive.Fingerprint = FileStamp(archive.Path);
+-                    string directory = Path.Combine(cache, "indexes", Hash("index-v1\n" + archive.Fingerprint + "\n" + toolKey));
+-                    Directory.CreateDirectory(directory);
+-                    string index = Path.Combine(directory, "files.txt");
+-                    if (!CacheValid(index))
++                    token.ThrowIfCancellationRequested();
++                    int position = i;
++                    await slots.WaitAsync(token).ConfigureAwait(false);
++                    reads.Add(Task.Run(async () =>
+                     {
+-                        string temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".txt");
+                         try
+                         {
+-                            var execution = await runner(Command(executable, IndexTimeoutMilliseconds, "list-files", "--input", archive.Path,
+-                                "--output", temporary, "--extended"), token).ConfigureAwait(false);
+-                            if (execution == null || execution.ExitCode != 0 || !File.Exists(temporary))
+-                                await DefaultIndexFallbackAsync(executable, archive, temporary, directory, progress, runner, token).ConfigureAwait(false);
+-                            if (new FileInfo(temporary).Length > MaximumIndexBytes) throw new IOException("The archive index exceeds the supported size.");
+-                            if (FileStamp(archive.Path) != archive.Fingerprint) throw new IOException("The archive changed while its asset index was being read.");
+-                            Replace(temporary, index); SaveValidation(index);
++                            var archive = archives[position];
++                            try { indexes[position] = await ReadIndexAsync(archive, executable, toolKey, cache, progress, runner, token).ConfigureAwait(false); }
++                            catch (Exception error) when (IsFileError(error) || error is TimeoutException || error is System.ComponentModel.Win32Exception)
++                            { warnings[position] = "Could not read archive " + archive.Path + ": " + error.Message; }
++                            Report(progress, "Reading linked Discovery assets: archive " + Interlocked.Increment(ref finished) + " of " + archives.Count + "…");
+                         }
+-                        finally { Delete(temporary); }
+-                    }
+-                    result.Indexes.Add(new DiscoveryArchiveLookupIndex { ArchivePath = archive.Path, Root = archive.Root,
+-                        Fingerprint = archive.Fingerprint, IndexPath = index, ToolPath = executable, ToolKey = toolKey });
++                        finally { slots.Release(); }
++                    }, token));
+                 }
+-                catch (Exception error) when (IsFileError(error) || error is TimeoutException || error is System.ComponentModel.Win32Exception)
+-                { result.Warnings.Add("Could not read archive " + archive.Path + ": " + error.Message); }
++                await Task.WhenAll(reads).ConfigureAwait(false);
++            }
++            for (int i = 0; i < archives.Count; i++)
++            {
++                if (indexes[i] != null) result.Indexes.Add(indexes[i]);
++                if (warnings[i] != null) result.Warnings.Add(warnings[i]);
+             }
+             return result;
+         }
+ 
++        private static async Task<DiscoveryArchiveLookupIndex> ReadIndexAsync(Archive archive, string executable, string toolKey,
++            string cache, Action<string> progress, DiscoveryArchiveRunner runner, CancellationToken token)
++        {
++            archive.Fingerprint = FileStamp(archive.Path);
++            string directory = Path.Combine(cache, "indexes", Hash("index-v1\n" + archive.Fingerprint + "\n" + toolKey));
++            Directory.CreateDirectory(directory);
++            string index = Path.Combine(directory, "files.txt");
++            // A reader failure is remembered for this exact archive and reader, so an
++            // unreadable mod is not unpacked twice on every scan. Changing either retries.
++            string failure = Path.Combine(directory, "failed.txt");
++            if (!CacheValid(index))
++            {
++                if (CacheValid(failure)) throw new IOException(File.ReadAllText(failure) + " (remembered; retried when the archive changes)");
++                string temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".txt");
++                try
++                {
++                    var execution = await runner(Command(executable, IndexTimeoutMilliseconds, "list-files", "--input", archive.Path,
++                        "--output", temporary, "--extended"), token).ConfigureAwait(false);
++                    if (execution == null || execution.ExitCode != 0 || !File.Exists(temporary))
++                        await DefaultIndexFallbackAsync(executable, archive, temporary, directory, progress, runner, token).ConfigureAwait(false);
++                    if (new FileInfo(temporary).Length > MaximumIndexBytes) throw new IOException("The archive index exceeds the supported size.");
++                    if (FileStamp(archive.Path) != archive.Fingerprint) throw new IOException("The archive changed while its asset index was being read.");
++                    Replace(temporary, index); SaveValidation(index);
++                }
++                catch (IOException error) when (error.Message.StartsWith(UnreadableArchive, StringComparison.Ordinal)
++                    && FileStamp(archive.Path) == archive.Fingerprint)
++                {
++                    // Only the reader's own refusal is remembered; timeouts, disk space
++                    // and a file changing mid-read stay retryable.
++                    try { File.WriteAllText(failure, error.Message); SaveValidation(failure); }
++                    catch (Exception saveError) when (IsFileError(saveError)) { }
++                    throw;
++                }
++                finally { Delete(temporary); }
++            }
++            return new DiscoveryArchiveLookupIndex { ArchivePath = archive.Path, Root = archive.Root,
++                Fingerprint = archive.Fingerprint, IndexPath = index, ToolPath = executable, ToolKey = toolKey };
++        }
++
+         private sealed class Archive
+         {
+             public string Path;
+@@ -451,7 +494,7 @@ namespace GorillaStudio.NameFolders
+                 var execution = await runner(Command(executable, IndexTimeoutMilliseconds, "list-files", "--input", shadow, "--extended"), token).ConfigureAwait(false);
+                 string sidecar = Path.Combine(staging, Path.GetFileNameWithoutExtension(shadow) + "_files.txt");
+                 if (execution == null || execution.ExitCode != 0 || !File.Exists(sidecar))
+-                    throw new IOException("The archive reader could not index " + Path.GetFileName(archive.Path) + ". " + ShortOutput(execution));
++                    throw new IOException(UnreadableArchive + Path.GetFileName(archive.Path) + ". " + ShortOutput(execution));
+                 if (new FileInfo(sidecar).Length > MaximumIndexBytes || HasReparsePath(sidecar, staging))
+                     throw new IOException("The archive reader produced an invalid temporary index.");
+                 Replace(sidecar, output);

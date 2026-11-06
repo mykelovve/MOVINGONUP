@@ -11,7 +11,8 @@ render entry point; without ``enabled 1`` nothing is registered.
 
 import os
 
-REVISION = 1
+REVISION = 2
+REPORT_NAME = "hair_motion_report.txt"
 CONFIG_NAME = "hair_motion.cfg"
 DEFAULTS = {
     "enabled": "0",
@@ -66,9 +67,18 @@ class HairMotion:
         self.state = {}
         self.last_frame = None
         self.reported = False
+        # Each rendered picture is one simulation step. A renderer can pose the
+        # body itself and render repeatedly without changing the scene frame,
+        # so the frame number alone cannot tell consecutive pictures apart.
+        self.stepped_since_render = False
+        self.counts = {"frame": 0, "render": 0, "steps": 0}
+        self.hair_bones = {}
+        self.largest_swing = 0.0
+        self.report_path = None
 
     def _is_hair(self, name):
-        return name.startswith(self.prefixes)
+        lower = name.lower()
+        return any(lower.startswith(prefix.lower()) for prefix in self.prefixes)
 
     def _plan(self, obj):
         """Hair bones, parents first; bones with non-standard inheritance are left alone."""
@@ -86,12 +96,20 @@ class HairMotion:
         order.sort()
         return [name for _, name in order][:self.max_bones]
 
-    def step(self, scene):
+    def step(self, scene, source="frame"):
         frame = scene.frame_current
-        if frame == self.last_frame:
-            return  # Already simulated (render_pre after frame_change_post).
-        restart = self.last_frame is None or frame != self.last_frame + 1
+        self.counts[source] = self.counts.get(source, 0) + 1
+        if source == "render":
+            if self.stepped_since_render:
+                self.stepped_since_render = False
+                return  # This picture's frame change already advanced the hair.
+        elif frame == self.last_frame and self.stepped_since_render:
+            return  # The same frame was set again before it was rendered.
+        else:
+            self.stepped_since_render = True
+        restart = self.last_frame is None or (frame != self.last_frame and frame != self.last_frame + 1)
         self.last_frame = frame
+        self.counts["steps"] += 1
         total = 0
         for obj in scene.objects:
             if getattr(obj, "type", None) != "ARMATURE" or obj.pose is None:
@@ -100,6 +118,31 @@ class HairMotion:
         if not self.reported:
             self.reported = True
             print("  hair motion: %d hair bone(s) simulated" % total, flush=True)
+        self.write_report(scene)
+
+    def write_report(self, scene):
+        """Plain-text proof of what the hair pass found and did in the last render."""
+        if self.report_path is None:
+            return
+        lines = ["Gorilla hair motion revision %d" % REVISION,
+                 "settings: stiffness %.2f, damping %.2f, gravity %.2f, prefixes %s"
+                 % (self.stiffness, self.damping, self.gravity, " ".join(self.prefixes)),
+                 "frame changes seen: %d, pictures rendered: %d, simulation steps: %d"
+                 % (self.counts.get("frame", 0), self.counts.get("render", 0), self.counts["steps"]),
+                 "largest hair swing so far (bone lengths): %.3f" % self.largest_swing]
+        for name, found in sorted(self.hair_bones.items()):
+            lines.append("armature %s: %d hair bone(s)%s" % (name, len(found), (" e.g. " + ", ".join(found[:3])) if found else ""))
+        if not any(self.hair_bones.values()):
+            similar = []
+            for obj in scene.objects:
+                if getattr(obj, "type", None) == "ARMATURE":
+                    similar += [bone.name for bone in obj.data.bones if "hair" in bone.name.lower()][:10]
+            lines.append("NO hair bones matched. Bones containing 'hair': " + (", ".join(similar) if similar else "none"))
+        try:
+            with open(self.report_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
 
     def _step_armature(self, obj, restart):
         Matrix, Vector = self.mathutils.Matrix, self.mathutils.Vector
@@ -109,7 +152,9 @@ class HairMotion:
             names = self._plan(obj)
             if not names:
                 self.state[key] = {"names": []}
+                self.hair_bones[key] = []
                 return 0
+            self.hair_bones[key] = list(names)
             entry = {"names": names, "original": {}, "written": {}, "pos": {}, "prev": {}}
             for name in names:
                 entry["original"][name] = obj.pose.bones[name].matrix_basis.copy()
@@ -154,6 +199,7 @@ class HairMotion:
             if direction.length <= 1e-9:
                 direction = target_w - head_w
             moved = head_w + direction.normalized() * span
+            self.largest_swing = max(self.largest_swing, (moved - target_w).length / span)
             entry["prev"][name], entry["pos"][name] = pos, moved
             wanted = (inverse @ moved) - head
             rotation = (tail - head).rotation_difference(wanted).to_matrix().to_4x4()
@@ -175,26 +221,36 @@ def register(directory):
     import mathutils
 
     motion = HairMotion(mathutils, settings)
+    motion.report_path = os.path.join(directory, REPORT_NAME)
     handlers = bpy.app.handlers
 
-    def on_frame(scene, depsgraph=None):
-        try:
-            motion.step(scene)
-        except Exception as error:  # A cosmetic pass must never stop a render.
-            print("  hair motion: skipped this frame:", str(error), flush=True)
+    def make(source):
+        def on_event(scene, depsgraph=None):
+            try:
+                if source == "render":
+                    # The renderer may have posed the body just before this
+                    # picture; read that pose, not the previous picture's.
+                    try:
+                        bpy.context.view_layer.update()
+                    except Exception:
+                        pass
+                motion.step(scene, source)
+            except Exception as error:  # A cosmetic pass must never stop a render.
+                print("  hair motion: skipped this frame:", str(error), flush=True)
+        persistent = getattr(handlers, "persistent", None)
+        if persistent is not None:
+            on_event = persistent(on_event)
+        on_event.gorilla_hair_motion_revision = REVISION
+        return on_event
 
-    persistent = getattr(handlers, "persistent", None)
-    if persistent is not None:
-        on_frame = persistent(on_frame)
-    on_frame.gorilla_hair_motion_revision = REVISION
-    for name in ("frame_change_post", "render_pre"):
+    for name, source in (("frame_change_post", "frame"), ("render_pre", "render")):
         collection = getattr(handlers, name, None)
         if collection is None:
             continue
         for previous in list(collection):
             if getattr(previous, "gorilla_hair_motion_revision", None) is not None:
                 collection.remove(previous)
-        collection.append(on_frame)
+        collection.append(make(source))
     _active = motion
     print("  hair motion: enabled (stiffness %.2f, damping %.2f, gravity %.2f)"
           % (motion.stiffness, motion.damping, motion.gravity), flush=True)

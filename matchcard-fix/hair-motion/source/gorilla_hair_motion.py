@@ -9,17 +9,19 @@ basis matrices are written.  Settings live in ``hair_motion.cfg`` beside the
 render entry point; without ``enabled 1`` nothing is registered.
 """
 
+import math
 import os
 
-REVISION = 2
+REVISION = 4
 REPORT_NAME = "hair_motion_report.txt"
 CONFIG_NAME = "hair_motion.cfg"
 DEFAULTS = {
     "enabled": "0",
     "prefixes": "Hair_",
-    "stiffness": "0.12",   # 0..1: pull back towards the animated pose each frame
-    "damping": "0.85",     # 0..1: share of last frame's swing that carries over
-    "gravity": "0.05",     # sag per frame, in bone lengths
+    "stiffness": "0.2",    # 0..1: pull back towards the animated pose each frame
+    "damping": "0.8",      # 0..1: share of last frame's swing that carries over
+    "gravity": "0.02",     # sag per frame, in bone lengths
+    "max_angle": "20",     # degrees any hair bone may point away from the unsimulated hair shape
     "max_bones": "2000",
 }
 _active = None
@@ -64,6 +66,7 @@ class HairMotion:
         self.damping = _clamp(float(settings["damping"]), 0.0, 1.0)
         self.gravity = _clamp(float(settings["gravity"]), 0.0, 5.0)
         self.max_bones = int(settings["max_bones"])
+        self.max_angle = math.radians(_clamp(float(settings["max_angle"]), 1.0, 180.0))
         self.state = {}
         self.last_frame = None
         self.reported = False
@@ -125,8 +128,8 @@ class HairMotion:
         if self.report_path is None:
             return
         lines = ["Gorilla hair motion revision %d" % REVISION,
-                 "settings: stiffness %.2f, damping %.2f, gravity %.2f, prefixes %s"
-                 % (self.stiffness, self.damping, self.gravity, " ".join(self.prefixes)),
+                 "settings: stiffness %.2f, damping %.2f, gravity %.2f, max angle %.0f, prefixes %s"
+                 % (self.stiffness, self.damping, self.gravity, math.degrees(self.max_angle), " ".join(self.prefixes)),
                  "frame changes seen: %d, pictures rendered: %d, simulation steps: %d"
                  % (self.counts.get("frame", 0), self.counts.get("render", 0), self.counts["steps"]),
                  "largest hair swing so far (bone lengths): %.3f" % self.largest_swing]
@@ -165,6 +168,10 @@ class HairMotion:
         world = obj.matrix_world
         inverse = world.inverted_safe()
         new_pose = {}
+        # The same chain with no simulation: what the motion alone would show.
+        # Every simulated bone stays within max_angle of this shape, so a long
+        # strand cannot curl up by adding each segment's swing to the last.
+        rest_pose = {}
         for name in names:
             pbone = obj.pose.bones[name]
             bone = pbone.bone
@@ -181,6 +188,11 @@ class HairMotion:
                     parent_pose = obj.pose.bones[parent.name].matrix.copy()
                 relative = parent.matrix_local.inverted_safe() @ bone.matrix_local
             target = parent_pose @ relative @ animated
+            rest_parent = rest_pose.get(parent.name) if parent is not None else None
+            if rest_parent is None:
+                rest_parent = Matrix.Identity(4) if parent is None else obj.pose.bones[parent.name].matrix.copy()
+            rest_target = rest_parent @ relative @ animated
+            rest_pose[name] = rest_target
             length = bone.length
             head = target.to_translation()
             tail = target @ Vector((0.0, length, 0.0))
@@ -198,6 +210,17 @@ class HairMotion:
             direction = moved - head_w
             if direction.length <= 1e-9:
                 direction = target_w - head_w
+            # Hair may swing, never flip: keep each bone within max_angle of its
+            # animated direction and drop the momentum that pushed it further.
+            animated_direction = (world @ (rest_target @ Vector((0.0, length, 0.0)))
+                                  - world @ rest_target.to_translation()).normalized()
+            if animated_direction.angle(direction.normalized(), 0.0) > self.max_angle:
+                axis = animated_direction.cross(direction.normalized())
+                if axis.length > 1e-9:
+                    direction = self.mathutils.Quaternion(axis.normalized(), self.max_angle) @ animated_direction
+                else:
+                    direction = animated_direction
+                pos = head_w + direction.normalized() * span
             moved = head_w + direction.normalized() * span
             self.largest_swing = max(self.largest_swing, (moved - target_w).length / span)
             entry["prev"][name], entry["pos"][name] = pos, moved

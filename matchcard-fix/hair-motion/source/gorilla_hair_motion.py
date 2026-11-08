@@ -12,7 +12,7 @@ render entry point; without ``enabled 1`` nothing is registered.
 import math
 import os
 
-REVISION = 4
+REVISION = 5
 REPORT_NAME = "hair_motion_report.txt"
 CONFIG_NAME = "hair_motion.cfg"
 DEFAULTS = {
@@ -250,13 +250,9 @@ def register(directory):
     def make(source):
         def on_event(scene, depsgraph=None):
             try:
-                if source == "render":
-                    # The renderer may have posed the body just before this
-                    # picture; read that pose, not the previous picture's.
-                    try:
-                        bpy.context.view_layer.update()
-                    except Exception:
-                        pass
+                # Never refresh the scene here: re-evaluating it can replay the
+                # animation over face, eye and eyelid adjustments the renderer
+                # made just before this picture. Hair reads the pose as it is.
                 motion.step(scene, source)
             except Exception as error:  # A cosmetic pass must never stop a render.
                 print("  hair motion: skipped this frame:", str(error), flush=True)

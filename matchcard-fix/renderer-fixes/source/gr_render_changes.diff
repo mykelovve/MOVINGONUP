@@ -1,0 +1,234 @@
+diff --git a/tmp/claude-0/-home-user-MOVINGONUP/f98ffcff-347d-57c6-9c66-ecf0263dc887/scratchpad/origsrc/MAKE-A-RENDER-READER/runtime/engine/gr_render.py b/runtime/engine/gr_render.py
+index fd694dc..c6ba73d 100644
+--- a/tmp/claude-0/-home-user-MOVINGONUP/f98ffcff-347d-57c6-9c66-ecf0263dc887/scratchpad/origsrc/MAKE-A-RENDER-READER/runtime/engine/gr_render.py
++++ b/runtime/engine/gr_render.py
+@@ -728,6 +728,126 @@ def _register_hair_colour_repair():
+ _register_hair_colour_repair()
+ 
+ 
++def _register_hair_coverage_repair():
++    """Cut strands out of hair-card meshes the renderer left fully opaque.
++
++    The original renderer gives its strand cut-out only to the meshes named in
++    its hair option. Body hair (combinations), beards and the like that are not
++    named there render every card as a solid patch, which shows as pale blotches
++    over shirts and tights. Their own RAI texture carries strand coverage in its
++    green channel, exactly as the renderer's hair material reads it.
++    """
++    import bpy
++
++    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
++    if handlers is None:
++        return
++    for previous in list(handlers.render_pre):
++        if getattr(previous, "_gorilla_hair_coverage_repair", False):
++            handlers.render_pre.remove(previous)
++    words = ("hair", "combination", "beard", "mustache", "goatee", "brow")
++    cut = 0.06
++    done = set()      # materials already cut out, or that this pass leaves alone
++    copies = {}       # original material pointer -> its cut-out private copy
++
++    def stem_of(obj):
++        stem = obj.name.split(":", 1)[0]
++        if "." in stem and stem.rsplit(".", 1)[1].isdigit():
++            stem = stem.rsplit(".", 1)[0]
++        return stem
++
++    def principled(material):
++        if not material.use_nodes or material.node_tree is None:
++            return None
++        for output in material.node_tree.nodes:
++            if output.type != "OUTPUT_MATERIAL" or not getattr(output, "is_active_output", True):
++                continue
++            links = output.inputs["Surface"].links
++            if len(links) == 1 and links[0].from_node.type == "BSDF_PRINCIPLED":
++                return links[0].from_node
++        return None
++
++    def coverage_image(tree, shader):
++        textures = [node for node in tree.nodes if node.type == "TEX_IMAGE" and node.image is not None]
++        named = [node for node in textures if "_rai" in node.image.name.lower()]
++        if named:
++            return named[0]
++        links = shader.inputs["Base Color"].links
++        if len(links) == 1 and links[0].from_node.type == "TEX_IMAGE" and links[0].from_node.image is not None:
++            return links[0].from_node
++        return None
++
++    def repair(scene, unused_depsgraph=None):
++        for obj in scene.objects:
++            if obj.type != "MESH" or getattr(obj, "hide_render", False):
++                continue
++            stem = stem_of(obj)
++            lower = stem.lower()
++            if not lower.endswith("_alpha") or not any(word in lower for word in words):
++                continue
++            for slot in obj.material_slots:
++                material = slot.material
++                if material is None or material.as_pointer() in done:
++                    continue
++                if material.as_pointer() in copies:
++                    try:
++                        slot.link = "OBJECT"
++                        slot.material = copies[material.as_pointer()]
++                    except (RuntimeError, ReferenceError):
++                        pass
++                    continue
++                try:
++                    shader = principled(material)
++                    if shader is None or shader.inputs["Alpha"].links:
++                        done.add(material.as_pointer())
++                        continue  # Already cut out (or not a shader this pass knows).
++                    if coverage_image(material.node_tree, shader) is None:
++                        done.add(material.as_pointer())
++                        continue
++                    # A private copy: the same material may also dress a body.
++                    copy = material.copy()
++                    tree = copy.node_tree
++                    target = principled(copy)
++                    source = coverage_image(tree, target)
++                    separate = tree.nodes.new("ShaderNodeSeparateColor")
++                    separate.label = "Gorilla hair coverage"
++                    tree.links.new(source.outputs["Color"], separate.inputs[0])
++                    lower_cut = tree.nodes.new("ShaderNodeMath")
++                    lower_cut.operation = "SUBTRACT"
++                    lower_cut.inputs[1].default_value = cut
++                    tree.links.new(separate.outputs[1], lower_cut.inputs[0])
++                    scale = tree.nodes.new("ShaderNodeMath")
++                    scale.operation = "MULTIPLY"
++                    scale.use_clamp = True
++                    scale.inputs[1].default_value = 1.0 / (1.0 - cut)
++                    tree.links.new(lower_cut.outputs[0], scale.inputs[0])
++                    tree.links.new(scale.outputs[0], target.inputs["Alpha"])
++                    for name, value in (("surface_render_method", "DITHERED"), ("blend_method", "HASHED"),
++                                        ("shadow_method", "HASHED")):
++                        try:
++                            setattr(copy, name, value)
++                        except (AttributeError, TypeError, ValueError):
++                            pass
++                    slot.link = "OBJECT"
++                    slot.material = copy
++                    done.add(copy.as_pointer())
++                    copies[material.as_pointer()] = copy
++                    print("  hair coverage added to", stem, "from", source.image.name, flush=True)
++                except Exception as error:  # A cosmetic pass must never stop a render.
++                    done.add(material.as_pointer())
++                    print("  hair coverage skipped:", stem, str(error), flush=True)
++
++    repair._gorilla_hair_coverage_repair = True
++    repair = handlers.persistent(repair)
++    handlers.render_pre.append(repair)
++
++
++try:
++    _register_hair_coverage_repair()
++except ImportError:
++    pass  # Non-rendering tools may import this module without Blender.
++
++
+ # BEGIN GENERATED GEOMETRY BUNDLE
+ _GEOMETRY_BUNDLE = {
+     'gorilla_geometry': ('f032e583d1f13f6e6258edd05b6bef48cb135a465ec0665806cada7a42e44988',
+@@ -955,12 +1075,73 @@ _GEOMETRY_BUNDLE = {
+         'hAzEP1XX2c5zmdZhNOTijkcK1P3/8RigZx29hpFXV01j9dl76qAnxJ1tCDv6gqL5BhiaRcN14mT4D47Y/meIxXMz7OdtPYNuGfDe'
+         'UUTLME7Cf8cj3GGFh4qjB2oIsIoHQVicWP399l7DjRwext2+dGjgkLU32uzbHey4L/udFJun/wMJvzzm'
+     ),
++    'gorilla_hair_motion': ('235463429b075bb5f18c705c3747e0d3731c021e206b3ef63bdc2ab7aa42b9b4',
++        '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'
++    ),
+ }
+ # END GENERATED GEOMETRY BUNDLE
+ 
+ 
+ def _load_geometry_bundle():
+     """Keep the existing eleven-file updater format self-contained."""
++    if getattr(_load_geometry_bundle, "loaded", False):
++        return
+     import base64
+     import hashlib
+     import types
+@@ -974,6 +1155,7 @@ def _load_geometry_bundle():
+         module.__file__ = __file__
+         sys.modules[name] = module
+         exec(compile(source, __file__ + ":" + name, "exec"), module.__dict__)
++    _load_geometry_bundle.loaded = True
+ 
+ 
+ def _renderer_options():
+@@ -987,7 +1169,20 @@ def _original_renderer():
+     import gr_render  # noqa: E402,F401 -- the original compiled renderer
+ 
+ 
++def _register_hair_motion():
++    # Opt-in through engine/hair_motion.cfg; independent of the geometry revision.
++    if not os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "hair_motion.cfg")):
++        return
++    try:
++        _load_geometry_bundle()
++        import gorilla_hair_motion
++        gorilla_hair_motion.register(os.path.dirname(os.path.abspath(__file__)))
++    except Exception as error:
++        print("  hair motion: unavailable:", str(error), flush=True)
++
++
+ def _run_renderer():
++    _register_hair_motion()
+     if os.environ.get("GORILLA_GEOMETRY_REVISION") != "1":
+         return _original_renderer()
+     _load_geometry_bundle()

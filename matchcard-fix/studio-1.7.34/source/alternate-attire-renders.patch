@@ -1,0 +1,213 @@
+diff --git a/src/GorillaStudio.NameFolders/CompletedRendersUI.cs b/src/GorillaStudio.NameFolders/CompletedRendersUI.cs
+index 74e5379..f39f2bd 100644
+--- a/src/GorillaStudio.NameFolders/CompletedRendersUI.cs
++++ b/src/GorillaStudio.NameFolders/CompletedRendersUI.cs
+@@ -171,12 +171,14 @@ namespace GorillaStudio.NameFolders
+             var chooseVersions = CompletedRenderButton("Choose versions…");
+             chooseVersions.ToolTip = "Keep one checked version for each repeated wrestler ID. Other checked wrestlers and saved files are retained.";
+             var open = CompletedRenderButton("Open file folder");
++            var attireRender = CompletedRenderButton("Install for one attire…");
++            attireRender.ToolTip = "Give one alternate attire its own moving render: installs the selected render as an extra slot for that attire's roster picture.";
+             var cancelScan = CompletedRenderButton("Cancel scan");
+             var checkSetup = CompletedRenderButton("Check match-card setup…");
+             checkSetup.ToolTip = "Check the installed slot when an unambiguous copy is found, otherwise the selected saved file. Running setup or enabling the plugin remains separate.";
+             var installSelected = CompletedRenderButton("Install selected"); installSelected.IsEnabled = false;
+             var close = CompletedRenderButton("Close");
+-            foreach (Button action in new[] { selectAll, clear, chooseVersions, open, cancelScan, checkSetup, installSelected, close }) actions.Children.Add(action);
++            foreach (Button action in new[] { selectAll, clear, chooseVersions, open, attireRender, cancelScan, checkSetup, installSelected, close }) actions.Children.Add(action);
+             Grid.SetRow(actions, 4); grid.Children.Add(actions);
+             bool closed = false, installing = false, closeRequested = false, ownerCloseRequested = false, scanning = false, changingChecks = false;
+             int scanRevision = 0;
+@@ -205,6 +207,7 @@ namespace GorillaStudio.NameFolders
+                 table.IsEnabled = !installing;
+                 selectAll.IsEnabled = clear.IsEnabled = !installing && !scanning;
+                 open.IsEnabled = !installing && table.SelectedItem is CompletedRenderRow;
++                attireRender.IsEnabled = !installing && !scanning && (table.SelectedItem as CompletedRenderRow)?.IsValid == true;
+                 chooseVersions.IsEnabled = !installing && !scanning && conflicts != 0;
+                 installSelected.IsEnabled = !installing && !scanning && selected.Length != 0;
+                 installSelected.Content = selected.Length == 0 ? "Install selected" : "Install " + ids.ToString(CultureInfo.InvariantCulture) + " selected";
+@@ -325,6 +328,14 @@ namespace GorillaStudio.NameFolders
+                 try { Process.Start(new ProcessStartInfo { FileName = Path.GetDirectoryName(row.Entry.PublishedPath ?? row.Entry.Path), UseShellExecute = true }); }
+                 catch (Exception error) { status.Text = BatchError(error).Message; }
+             };
++            attireRender.Click += (sender, args) =>
++            {
++                var row = table.SelectedItem as CompletedRenderRow;
++                if (row == null || installing || scanning) return;
++                if (BatchNativeBusy(owner)) { status.Text = "Wait for the current model, render or setup to finish first."; return; }
++                try { OpenAttireRenderInstall(dialog, owner, row.Entry, message => { status.Text = message; SetModelStatus(owner, message); }); }
++                catch (Exception error) { status.Text = "Could not open attire renders: " + BatchError(error).Message; }
++            };
+             installSelected.Click += async (sender, args) =>
+             {
+                 if (installing || scanning) return;
+@@ -380,6 +391,13 @@ namespace GorillaStudio.NameFolders
+                             BatchRenderInstallReport installed = BatchRenderInstaller.Install(AppDomain.CurrentDomain.BaseDirectory, currentGame, jobs);
+                             if (installed.Installed > 0)
+                                 foreach (BatchRenderJob job in jobs) CopyInstalledSelectionLoopPolicy(job.RenderPath, currentGame);
++                            if (installed.Installed > 0)
++                            {
++                                // A re-installed wrestler render lists every attire picture again;
++                                // keep the attire renders' pictures with the attire renders.
++                                AttireRenderResult attires = AttireRenders.Reapply(currentGame);
++                                preparationWarnings.AddRange(attires.Notes);
++                            }
+                             return installed;
+                         }
+                         finally
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryRenderLinks.cs b/src/GorillaStudio.NameFolders/DiscoveryRenderLinks.cs
+index c41d73a..dd3fd2a 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryRenderLinks.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryRenderLinks.cs
+@@ -4,6 +4,13 @@ using System.IO;
+ 
+ namespace GorillaStudio.NameFolders
+ {
++    /// <summary>One attire of a roster profile and its own roster picture hash.</summary>
++    public sealed class AttirePicture
++    {
++        public int Number { get; internal set; }
++        public ulong Hash { get; internal set; }
++    }
++
+     /// <summary>Reads the roster picture path hashes stored in the actual Discovery profiles.</summary>
+     public static class DiscoveryRenderLinks
+     {
+@@ -50,6 +57,47 @@ namespace GorillaStudio.NameFolders
+             return result;
+         }
+ 
++        /// <summary>
++        /// Returns each logical roster ID's attires in table order, numbered from 1, with
++        /// that attire's own TypeA picture hash (0 when the attire has no picture link).
++        /// Duplicate profile records for one ID continue the numbering.
++        /// </summary>
++        public static Dictionary<int, List<AttirePicture>> ReadAttires(string tablePath)
++        {
++            var file = new FlatBufferFile(File.ReadAllBytes(tablePath), "Char");
++            var result = new Dictionary<int, List<AttirePicture>>();
++            try
++            {
++                SizedField(file, file.Root, 0, 4);
++                foreach (int wrapper in file.Tables(file.Root, 0))
++                {
++                    int profileField = SizedField(file, wrapper, 1, 4);
++                    if (profileField == 0) continue;
++                    uint displacement = file.U32(profileField);
++                    if (displacement < 4 || displacement > int.MaxValue - profileField)
++                        throw Invalid("Invalid profile reference.");
++                    int profile = profileField + (int)displacement;
++                    int idField = SizedField(file, profile, 2, 2);
++                    if (idField == 0) continue;
++                    int id = file.U16(idField);
++                    if (id == 0) continue;
++                    List<AttirePicture> attires;
++                    if (!result.TryGetValue(id, out attires)) result[id] = attires = new List<AttirePicture>();
++                    SizedField(file, profile, 4, 4);
++                    foreach (int attire in file.Tables(profile, 4))
++                    {
++                        int pictureField = SizedField(file, attire, 6, 8);
++                        attires.Add(new AttirePicture { Number = attires.Count + 1, Hash = pictureField == 0 ? 0 : file.U64(pictureField) });
++                    }
++                }
++            }
++            catch (OverflowException error)
++            {
++                throw new InvalidDataException("Invalid Discovery roster picture links: an offset is out of range.", error);
++            }
++            return result;
++        }
++
+         private static int SizedField(FlatBufferFile file, int table, int index, int width)
+         {
+             int location = file.Field(table, index);
+diff --git a/src/GorillaStudio.NameFolders/GorillaRenderMetadata.cs b/src/GorillaStudio.NameFolders/GorillaRenderMetadata.cs
+index 05a5818..590b66d 100644
+--- a/src/GorillaStudio.NameFolders/GorillaRenderMetadata.cs
++++ b/src/GorillaStudio.NameFolders/GorillaRenderMetadata.cs
+@@ -75,6 +75,85 @@ namespace GorillaStudio.NameFolders
+             catch (Exception error) when (MetadataError(error)) { return false; }
+         }
+ 
++        /// <summary>Reads the picture keys of a render that belongs to the given logical wrestler.</summary>
++        public static bool TryReadRosterHashes(string path, int wrestlerId, out List<string> hashes)
++        {
++            hashes = null;
++            try
++            {
++                using (var source = new FileStream(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read))
++                {
++                    long videoLength; Dictionary<string, object> metadata;
++                    if (!Read(source, out videoLength, out metadata) || !MatchesWrestler(metadata, wrestlerId)) return false;
++                    var result = new List<string>();
++                    object value;
++                    if (metadata.TryGetValue("render_hashes", out value) && value != null)
++                    {
++                        var list = value as System.Collections.IEnumerable;
++                        if (list == null || value is string) return false;
++                        foreach (object item in list)
++                        {
++                            string hash = item as string;
++                            if (!ValidHash(hash)) return false;
++                            result.Add(hash.ToUpperInvariant());
++                        }
++                    }
++                    hashes = result;
++                    return true;
++                }
++            }
++            catch (Exception error) when (MetadataError(error)) { return false; }
++        }
++
++        /// <summary>
++        /// Writes a copy of a completed render to <paramref name="destination"/> that the
++        /// Moving Renders plugin treats as its own slot <paramref name="aliasId"/>: the only
++        /// picture key is <paramref name="pictureHash"/>, so the plugin plays this movie when
++        /// that attire's roster picture is shown. Video bytes and every other field (screens,
++        /// ending, taunt, name) are preserved. The destination must not exist yet.
++        /// </summary>
++        public static bool WriteAttireAlias(string source, int sourceWrestlerId, string destination, int aliasId, string pictureHash)
++        {
++            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(destination) || sourceWrestlerId < 1 || sourceWrestlerId > 65535
++                || aliasId < 1 || aliasId > 65535 || aliasId == sourceWrestlerId || !ValidHash(pictureHash)) return false;
++            string temporary = null;
++            try
++            {
++                string full = Path.GetFullPath(source), target = Path.GetFullPath(destination);
++                if (File.Exists(target)) return false;
++                using (var input = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
++                {
++                    long videoLength; Dictionary<string, object> metadata;
++                    if (!Read(input, out videoLength, out metadata) || !Supported(metadata, sourceWrestlerId) || !FullVideo(input, videoLength)) return false;
++                    metadata["wrestler_id"] = aliasId;
++                    metadata["render_hashes"] = new List<string> { pictureHash.ToUpperInvariant() };
++                    metadata["extra_ids"] = new List<int>();
++                    metadata["shared_hashes"] = new List<string>();
++                    metadata.Remove("render_names");
++                    metadata["attire_of"] = sourceWrestlerId;
++                    byte[] json = Utf8.GetBytes(Serialize(metadata));
++                    if (json.Length == 0 || json.Length > 65536) return false;
++                    temporary = Path.Combine(Path.GetDirectoryName(target), "." + Path.GetFileName(target) + ".attire-" + Guid.NewGuid().ToString("N") + ".tmp");
++                    using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++                    {
++                        input.Position = 0;
++                        CopyExactly(input, output, videoLength);
++                        output.Write(json, 0, json.Length);
++                        using (var footer = new BinaryWriter(output, Utf8, true))
++                        { footer.Write((uint)json.Length); footer.Write(new byte[] { (byte)'G', (byte)'M', (byte)'R', (byte)'1' }); footer.Flush(); }
++                        output.Flush(true);
++                    }
++                }
++                File.Move(temporary, target); temporary = null;
++                return true;
++            }
++            catch (Exception error) when (MetadataError(error)) { return false; }
++            finally
++            {
++                if (temporary != null) try { File.Delete(temporary); } catch (Exception error) when (MetadataError(error)) { }
++            }
++        }
++
+         internal static bool SameExceptScreens(Dictionary<string, object> left, Dictionary<string, object> right)
+         {
+             if (left == null || right == null) return false;

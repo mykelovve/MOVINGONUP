@@ -1,0 +1,112 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryMotionDecoder.cs b/src/GorillaStudio.NameFolders/DiscoveryMotionDecoder.cs
+index 610949d..2259ba3 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryMotionDecoder.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryMotionDecoder.cs
+@@ -35,12 +35,17 @@ namespace GorillaStudio.NameFolders
+             if (tracks == 0 || tracks > 4096 || frames == 0 || frames > 100000
+                 || (long)tracks * frames * 7 > 32000000)
+                 throw Invalid("The Discovery motion has an unsupported bone or frame count.");
+-            if (extra38 != 0 || extra60 != 0)
++            if (extra38 != 0)
+                 throw Invalid("This Discovery motion includes additional channel sections that are not supported yet.");
++            // Many 2K26 taunts carry a list of 8-byte entries (count at 0x60,
++            // repeated at 0x64) stored right after the bone IDs. It has no
++            // channel data of its own; the body channels follow it unchanged.
++            if (extra60 > 4096 || U32(data, 0x64) != extra60)
++                throw Invalid("The Discovery motion has an inconsistent extra entry list.");
+             if (U32(data, 0x24) != tracks || U32(data, 0x7C) != descriptors || U32(data, 0x94) != words
+                 || descriptors != tracks * 6)
+                 throw Invalid("The Discovery motion channel table is inconsistent.");
+-            long descriptorStart = 0xA0L + tracks * 8L;
++            long descriptorStart = 0xA0L + tracks * 8L + extra60 * 8L;
+             long packedStart = descriptorStart + descriptors * 8L;
+             if (packedStart + words * 8L != data.LongLength)
+                 throw Invalid("The Discovery motion section lengths do not match the record.");
+diff --git a/tests/DiscoveryMotionTests/Program.cs b/tests/DiscoveryMotionTests/Program.cs
+index 2c1ec16..6435a21 100644
+--- a/tests/DiscoveryMotionTests/Program.cs
++++ b/tests/DiscoveryMotionTests/Program.cs
+@@ -51,7 +51,24 @@ internal static class Program
+         byte[] malformed = (byte[])constant.Clone(); SetU32(malformed, 0x38, 1);
+         Fails("Additional channel sections fail clearly", malformed);
+         malformed = (byte[])constant.Clone(); SetU32(malformed, 0x60, 1);
+-        Fails("Unknown scale sections are never silently dropped", malformed);
++        Fails("An extra entry count without its repeated copy is rejected", malformed);
++        malformed = (byte[])constant.Clone(); SetU32(malformed, 0x60, 1); SetU32(malformed, 0x64, 1);
++        Fails("An extra entry count with no entry bytes is rejected", malformed);
++
++        // 2K26 taunts: an 8-byte entry list after the bone IDs, then the usual channels.
++        foreach (byte[] plain in new[] { constant, denseData, Entropy(true) })
++        {
++            byte[] listed = WithExtraList(plain, 3);
++            DecodedDiscoveryMotion expected = DiscoveryMotionDecoder.Decode(plain), actual = DiscoveryMotionDecoder.Decode(listed);
++            bool same = expected.Frames == actual.Frames && expected.Ids[0] == actual.Ids[0];
++            for (int frame = 0; same && frame < expected.Frames; frame++)
++                for (int value = 0; value < 7; value++) same &= expected.Poses[0, frame, value] == actual.Poses[0, frame, value];
++            Equal("A motion with an extra entry list after the bone IDs decodes like the plain motion (" + expected.Frames + " frames)", true, same);
++        }
++        malformed = WithExtraList(constant, 2); SetU32(malformed, 0x64, 3);
++        Fails("A repeated extra entry count that disagrees is rejected", malformed);
++        malformed = WithExtraList(constant, 2); SetU32(malformed, 0x60, 4097); SetU32(malformed, 0x64, 4097);
++        Fails("An oversized extra entry list is rejected before reading", malformed);
+         malformed = (byte[])constant.Clone(); SetU32(malformed, 0x24, 2);
+         Fails("Inconsistent bone counts are rejected", malformed);
+         malformed = (byte[])constant.Clone(); SetU32(malformed, 0x78, 5); SetU32(malformed, 0x7C, 5);
+@@ -138,6 +155,17 @@ internal static class Program
+         Array.Copy(packed, 0, data, 0xA0 + 8 + 48, packed.Length);
+         return data;
+     }
++    private static byte[] WithExtraList(byte[] plain, int entries)
++    {
++        uint tracks = BitConverter.ToUInt32(plain, 0x20);
++        int at = 0xA0 + (int)tracks * 8;
++        var result = new byte[plain.Length + entries * 8];
++        Array.Copy(plain, result, at);
++        for (int index = 0; index < entries * 8; index++) result[at + index] = (byte)(0x5A ^ index);
++        Array.Copy(plain, at, result, at + entries * 8, plain.Length - at);
++        SetU32(result, 0x60, (uint)entries); SetU32(result, 0x64, (uint)entries);
++        return result;
++    }
+     private static int Descriptor(int index) { return 0xA8 + index * 8; }
+     private static void Describe(byte[] bytes, int channel, int exponent, int width, float basis)
+     {
+diff --git a/tests/DiscoveryTauntLibraryTests/Program.cs b/tests/DiscoveryTauntLibraryTests/Program.cs
+index 072fe85..a91b266 100644
+--- a/tests/DiscoveryTauntLibraryTests/Program.cs
++++ b/tests/DiscoveryTauntLibraryTests/Program.cs
+@@ -526,7 +526,7 @@ internal static class Program
+             Equal("Container override poses remain exact", true,
+                 DiscoveryMotionNpz.MatchesPoses(Path.Combine(built.Root, "data", "gamepack", "decoded", clip + ".npz"), DiscoveryMotionDecoder.Decode(edit)));
+             File.Delete(Path.Combine(directory, "Edited.clips"));
+-            Write(edit, 0x60, 1u); File.WriteAllBytes(loose, edit);
++            Write(edit, 0x38, 1u); File.WriteAllBytes(loose, edit);
+             prepared = DiscoveryTauntLibrary.Prepare(f.App, f.Data, CancellationToken.None, null, pack);
+             built = DiscoveryTauntLibrary.BuildPrepared(prepared, f.Storage);
+             Equal("An unsupported active extracted mod is never silently replaced by shipped stock motion", 0, built.VerifiedImported);
+@@ -946,7 +946,7 @@ internal static class Program
+             readFailure.Unavailable.Single().Reason.Contains(raw) && readFailure.Unavailable.Single().Reason.Contains("62541a000"));
+         Equal("A source-read failure stays out of the engine manifest", 0, ManifestCount(Path.Combine(readFailure.Library, "taunts.json")));
+ 
+-        byte[] unsupported = Motion("62541a000", 30); Write(unsupported, 0x60, 1u); File.WriteAllBytes(raw, unsupported);
++        byte[] unsupported = Motion("62541a000", 30); Write(unsupported, 0x38, 1u); File.WriteAllBytes(raw, unsupported);
+         DiscoveryTauntImport formatFailure = DiscoveryTauntLibrary.Build(app, storage, data);
+         Equal("An actual decoder rejection retains the format classification", DiscoveryTauntUnavailableKind.UnsupportedFormat, formatFailure.Unavailable.Single().Kind);
+         Equal("An actual decoder rejection increments only the unsupported count", 1, formatFailure.Unsupported);
+@@ -994,7 +994,7 @@ internal static class Program
+ 
+         File.WriteAllBytes(raw, edited);
+         DiscoveryTauntLibrary.Build(app, storage, data);
+-        byte[] unsupported = (byte[])edited.Clone(); Write(unsupported, 0x60, 1u);
++        byte[] unsupported = (byte[])edited.Clone(); Write(unsupported, 0x38, 1u);
+         File.WriteAllBytes(raw, unsupported);
+         DiscoveryTauntImport rejected = DiscoveryTauntLibrary.Build(app, storage, data);
+         Equal("An unsupported replacement is reported clearly", 1, rejected.Unsupported);
+@@ -1027,7 +1027,7 @@ internal static class Program
+         DiscoveryTauntImport renamedImport = DiscoveryTauntLibrary.Build(app, storage, data);
+         Equal("Refreshing rereads a renamed missing definition", "New Missing", renamedImport.Unavailable.Single().Name);
+         Equal("UI-only missing name updates leave the playable manifest unchanged", unchanged, Hash(manifest));
+-        byte[] unsupportedMissing = Motion("60000a002", 30); Write(unsupportedMissing, 0x60, 1u); File.WriteAllBytes(raw, unsupportedMissing);
++        byte[] unsupportedMissing = Motion("60000a002", 30); Write(unsupportedMissing, 0x38, 1u); File.WriteAllBytes(raw, unsupportedMissing);
+         DiscoveryTauntImport unsupportedImport = DiscoveryTauntLibrary.Build(app, storage, data);
+         Equal("An unsupported new motion stays searchable with an explicit format reason", DiscoveryTauntUnavailableKind.UnsupportedFormat, unsupportedImport.Unavailable.Single().Kind);
+         Equal("Unsupported UI-only motion also stays out of the engine manifest", 1, ManifestCount(manifest));

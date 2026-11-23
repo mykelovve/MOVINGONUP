@@ -1,0 +1,88 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs b/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
+index f214b99..05c2364 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
+@@ -64,12 +64,31 @@ namespace GorillaStudio.NameFolders
+         public bool HasLinkedSources { get; private set; }
+         public int Count { get { return assets.Count; } }
+ 
++        /// <summary>Finds a record by its 64-bit clip-name hash (for renamed clips such as Move Installer "dsco_…" names).</summary>
++        public DiscoveryMotionAsset FindId(ulong id)
++        {
++            DiscoveryMotionAsset result;
++            return assets.TryGetValue(id, out result) ? result : null;
++        }
++
+         public DiscoveryMotionAsset Find(string clip)
+         {
+             DiscoveryMotionAsset result;
+-            return assets.TryGetValue(ClipId(clip), out result) ? result : null;
++            if (assets.TryGetValue(ClipId(clip), out result)) return result;
++            // Taunts installed with the Move Installer play a renamed clip
++            // ("dsco_<pack>_<move>_<variant>") listed in its wwe.adefs.
++            if (installedNames.Count > 0)
++            {
++                string renamed = AdefsMotions.RenamedClip(installedNames, clip);
++                if (renamed != null && assets.TryGetValue(ClipId(renamed), out result)) return result;
++            }
++            return null;
+         }
+ 
++        /// <summary>How many Move Installer clip names were read, and from where (null when there is no Move Installer data).</summary>
++        public string InstalledClipNote { get; private set; }
++        private List<string> installedNames = new List<string>();
++
+         public static ulong ClipId(string clip)
+         {
+             if (string.IsNullOrEmpty(clip)) throw new ArgumentException("A clip name is required.", nameof(clip));
+@@ -89,6 +108,15 @@ namespace GorillaStudio.NameFolders
+             result.searchRoots.Add(root);
+             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+             var pending = new Stack<PendingDirectory>();
++            // The Move Installer puts installed moves in a "_moves" folder beside
++            // discovery_data (baked separately as _moves.cak). Read it too, after
++            // discovery_data, so installed taunts are found like loose Discovery clips.
++            string moves = MovesRoot(root);
++            if (moves != null)
++            {
++                result.searchRoots.Add(moves);
++                pending.Push(new PendingDirectory { Path = moves, BoundPath = moves });
++            }
+             pending.Push(new PendingDirectory { Path = root, BoundPath = root });
+             var containers = new List<MotionSnapshot>();
+             var loose = new List<MotionSnapshot>();
+@@ -148,9 +176,34 @@ namespace GorillaStudio.NameFolders
+             foreach (MotionSnapshot source in loose.OrderBy(value => value.Written).ThenBy(value => value.Path, StringComparer.OrdinalIgnoreCase))
+             { cancellationToken.ThrowIfCancellationRequested(); result.AddFile(source, true, cancellationToken); }
+             cancellationToken.ThrowIfCancellationRequested();
++            string adefs = AdefsMotions.AdefsPath(root);
++            if (adefs != null)
++            {
++                string note;
++                result.installedNames = AdefsMotions.InstalledNames(root, out note);
++                result.InstalledClipNote = note;
++                if (note != null) result.Warnings.Add(note);
++                // A reinstall rewrites wwe.adefs; treat that like any other changed source.
++                result.sources.Add(MotionSnapshot.Capture(adefs, adefs));
++            }
+             return result;
+         }
+ 
++        /// <summary>The Move Installer's "_moves" folder beside the Discovery data folder, if present.</summary>
++        internal static string MovesRoot(string discoveryDataRoot)
++        {
++            try
++            {
++                string parent = System.IO.Path.GetDirectoryName(discoveryDataRoot.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
++                if (string.IsNullOrEmpty(parent)) return null;
++                string moves = System.IO.Path.Combine(parent, "_moves");
++                return Directory.Exists(moves) && !SamePath(moves, discoveryDataRoot) ? System.IO.Path.GetFullPath(moves) : null;
++            }
++            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is ArgumentException
++                || error is NotSupportedException || error is System.Security.SecurityException)
++            { return null; }
++        }
++
+         /// <summary>Audits the captured paths without reopening any animation table or payload.</summary>
+         public bool IsCurrent(CancellationToken cancellationToken)
+         {

@@ -1,0 +1,172 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+index fd022b8..fac0a77 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryLoaderUI.cs
+@@ -267,10 +267,12 @@ namespace GorillaStudio.NameFolders
+             var window = instance as Window;
+             if (window == null) return;
+             SetGameModelWindow(window);
++            ShowHelperVersion(window);
+             RoutedEventHandler loaded = null;
+             loaded = async (sender, args) =>
+             {
+                 window.Loaded -= loaded;
++                ShowHelperVersion(window);
+                 AttachStandaloneInterface(window);
+                 AttachDiscoveryButton(window);
+                 AttachPerformanceControls(window);
+@@ -306,6 +308,40 @@ namespace GorillaStudio.NameFolders
+             else window.Loaded += loaded;
+         }
+ 
++        // The title names the installed helper so an update is visible at a glance;
++        // the original "1.0.2" release number is replaced rather than duplicated.
++        private static void ShowHelperVersion(Window window)
++        {
++            // Cosmetic only: a failure here must never stop Studio from starting.
++            try
++            {
++                string version = typeof(FolderBridge).Assembly.GetName().Version.ToString(3);
++                string title = window.Title ?? "";
++                if (!title.Contains(version))
++                    window.Title = title.Contains("1.0.2") ? title.Replace("1.0.2", version) : (title.Length == 0 ? "Gorilla Studio" : title) + " v" + version;
++                // The window draws its own header badge ("MOVING RENDERS · v1.0.2"); its
++                // templated parts exist only once the UI is idle after loading.
++                window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
++                {
++                    try { ReplaceVersionText(window, "v1.0.2", "v" + version, 0); }
++                    catch (Exception) { }
++                }));
++            }
++            catch (Exception) { }
++        }
++
++        private static void ReplaceVersionText(DependencyObject node, string from, string to, int depth)
++        {
++            if (node == null || depth > 64) return;
++            var block = node as TextBlock;
++            // Setting Text rebuilds the inline runs, so nothing iterates them while editing.
++            if (block != null && block.Text != null && block.Text.Contains(from)) block.Text = block.Text.Replace(from, to);
++            var children = new List<DependencyObject>();
++            if (node is Visual || node is System.Windows.Media.Media3D.Visual3D)
++                for (int i = 0, count = VisualTreeHelper.GetChildrenCount(node); i < count; i++) children.Add(VisualTreeHelper.GetChild(node, i));
++            foreach (DependencyObject child in children) ReplaceVersionText(child, from, to, depth + 1);
++        }
++
+         private static bool NativeStartupAutomation(Window window)
+         {
+             Type app = window.GetType().Assembly.GetType("Gorilla.RenderStudio.App");
+@@ -573,10 +609,47 @@ namespace GorillaStudio.NameFolders
+                 CloseTauntLoadProgress(load);
+             };
+             window.Closed += closed;
++            string savedFingerprint = null;
+             try
+             {
+                 ShowTauntLoadProgress(window, null, load);
+                 load.Cancellation.Token.ThrowIfCancellationRequested();
++                // Like the bundled base-game taunts, a finished Discovery library
++                // is reused as long as none of its source files changed. Only a
++                // real change (or Refresh data) scans and rebuilds it.
++                string helperRoot = AppDomain.CurrentDomain.BaseDirectory;
++                long savedRevision = context.BeginRefresh();
++                SetDiscoveryLoadStatus(window, load, "Checking whether Discovery animations changed…");
++                CancellationToken savedToken = load.Cancellation.Token;
++                savedFingerprint = await Task.Run(() => DiscoveryTauntSavedLibrary.Fingerprint(helperRoot, game, source, savedToken), savedToken);
++                if (!explicitSetup && savedFingerprint != null)
++                {
++                    DiscoveryTauntImport saved = await Task.Run(() => DiscoveryTauntSavedLibrary.TryLoad(helperRoot, game, source, savedFingerprint), savedToken);
++                    if (saved != null)
++                    {
++                        if (!DiscoveryTauntBridge.IsActiveLibrary(saved))
++                        {
++                            while (true)
++                            {
++                                await coordinator.WaitForCommitAsync(load.Lease, () => DiscoveryTauntCommitIdle(window), savedToken);
++                                if (DiscoveryTauntCommitIdle(window)) break;
++                            }
++                        }
++                        if (!coordinator.IsCurrent(load.Lease, type.GetField("Game", InstanceMembers)?.GetValue(window) as string,
++                            requestedTauntRoots.TryGetValue(window, out string savedRoot) ? savedRoot : null)) throw new OperationCanceledException(savedToken);
++                        DiscoveryTauntBridge.ApplySaved(window, game, source, saved);
++                        load.LastPublished = saved;
++                        activeTauntContexts[window] = Tuple.Create(game, source);
++                        tauntFreshnessRequired.Remove(window);
++                        context.CompleteRefresh(savedRevision, true);
++                        UpdateDiscoveryRenderControls(window);
++                        string ready = saved.Available + " taunts ready · saved library reused (no Discovery changes)";
++                        if (saved.Missing > 0) ready += " · " + saved.Missing + " animations not located";
++                        if (saved.Unsupported > 0) ready += " · " + saved.Unsupported + " unsupported animations";
++                        SetDiscoveryLoadStatus(window, load, ready);
++                        return;
++                    }
++                }
+                 SetDiscoveryLoadStatus(window, load, "Roster ready. Loading Discovery animations in the background…");
+                 DiscoveryTauntImport import = await DiscoveryTauntBridge.RefreshAsync(window, source,
+                     update => UpdateTauntLoadProgress(window, load, update), load.Cancellation.Token,
+@@ -607,6 +680,8 @@ namespace GorillaStudio.NameFolders
+                 // normal rescans for those sources instead of retaining stale
+                 // external animations; ordinary extracted trees can be reused.
+                 context.CompleteRefresh(import.SourceRevision, !import.HasLinkedSources);
++                string fingerprintToSave = savedFingerprint;
++                await Task.Run(() => DiscoveryTauntSavedLibrary.Save(helperRoot, game, source, fingerprintToSave, import));
+                 string message = import.Definitions == 0
+                     ? "No Discovery moves table found; the bundled taunts remain available."
+                     : import.Available + " taunts available · " + import.Imported + " added from Discovery";
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryTauntBridge.cs b/src/GorillaStudio.NameFolders/DiscoveryTauntBridge.cs
+index 6eb3396..df93c55 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryTauntBridge.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryTauntBridge.cs
+@@ -261,6 +261,28 @@ namespace GorillaStudio.NameFolders
+             }
+         }
+ 
++        /// <summary>Shows a saved library whose sources are unchanged, exactly as a completed refresh would.</summary>
++        internal static bool IsActiveLibrary(DiscoveryTauntImport import)
++        {
++            return import != null && string.Equals(FolderBridge.DiscoveryEngineRoot, import.Root, StringComparison.OrdinalIgnoreCase);
++        }
++
++        internal static void ApplySaved(Window window, string game, string discoveryRoot, DiscoveryTauntImport import)
++        {
++            RefreshOnDispatcher(window, () => {
++                bool active = IsActiveLibrary(import);
++                if (!active)
++                {
++                    window.GetType().GetField("PrepWanted", Members)?.SetValue(window, null);
++                    window.GetType().GetField("PrepDone", Members)?.SetValue(window, null);
++                }
++                RecordAnimationReport(window, game, discoveryRoot, import);
++                if (active) return;
++                Apply(window, import);
++                window.GetType().GetMethod("Prepare", Members, null, new[] { typeof(string) }, null)?.Invoke(window, new object[] { null });
++            });
++        }
++
+         private static void RefreshOnDispatcher(Window window, Action action)
+         {
+             if (window.Dispatcher.HasShutdownStarted || window.Dispatcher.HasShutdownFinished)
+@@ -489,6 +511,10 @@ namespace GorillaStudio.NameFolders
+                 replacement.Add(item);
+             }
+             replacement = replacement.OrderBy(item => Convert.ToString(itemType.GetProperty("Name").GetValue(item, null)), StringComparer.OrdinalIgnoreCase).ToList();
++            // Previews already made for identical motions (their keys carry the
++            // motion hash) stay available in the new library folder.
++            DiscoveryTauntSavedLibrary.CarryPreviews(FolderBridge.DiscoveryEngineRoot, import.Root,
++                import.Taunts.Select(entry => Text(entry, "key")));
+             // Complete the new list before switching the engine's data root.
+             FolderBridge.DiscoveryEngineRoot = import.Root;
+             library.SetValue(window, import.Library);
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryTauntLibrary.cs b/src/GorillaStudio.NameFolders/DiscoveryTauntLibrary.cs
+index ae41ed1..a01aa61 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryTauntLibrary.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryTauntLibrary.cs
+@@ -239,6 +239,8 @@ namespace GorillaStudio.NameFolders
+             return prepared.Missing.ToList();
+         }
+ 
++        internal static string SourceRootFor(string selected, string table) { return SourceRoot(selected, table); }
++
+         private static string SourceRoot(string selected, string table)
+         {
+             string source = Path.GetFullPath(selected);

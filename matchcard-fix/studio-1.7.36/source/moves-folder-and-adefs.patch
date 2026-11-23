@@ -1,0 +1,167 @@
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs b/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
+index 574ddb5..5c4f117 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryArchiveMotions.cs
+@@ -12,11 +12,22 @@ using System.Threading.Tasks;
+ namespace GorillaStudio.NameFolders
+ {
+     /// <summary>Recovers exact requested motion records from indexed game/mod archives, into the application cache only.</summary>
++    public enum DiscoveryMotionSourcePolicy
++    {
++        /// <summary>Use a motion only when every archive is readable and all copies agree.</summary>
++        Strict,
++        /// <summary>Use what is found; differing copies resolve to mods, then the newest game patch.</summary>
++        BestAvailable,
++    }
++
+     public static class DiscoveryArchiveMotions
+     {
++        // Unreadable mod CAKs are common, and under Strict any one of them hid every
++        // archive taunt. BestAvailable keeps the found motions and reports its picks.
++        public static DiscoveryMotionSourcePolicy Policy { get; set; } = DiscoveryMotionSourcePolicy.BestAvailable;
+         private const long MaximumFileBytes = 256L * 1024 * 1024;
+         private const long MaximumRetainedBytes = 256L * 1024 * 1024;
+-        private const int MaximumCandidates = 4096;
++        private const int MaximumCandidates = 16384;
+         private const int MaximumRecordBytes = 128 * 1024 * 1024;
+         private static readonly Regex Canonical = new Regex(@"\A[0-9]{1,10}a[0-9]{3,6}\z", RegexOptions.CultureInvariant);
+         private static readonly Regex Area = new Regex(@"(?:^|/)MotionArea_([0-9]+)_([0-9]+)\.(?:clips|clip)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+@@ -70,7 +81,19 @@ namespace GorillaStudio.NameFolders
+             return Task.Run(async () =>
+             {
+                 await DiscoveryArchiveRenders.AssetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+-                try { return await FindCore(appRoot, gameRoot, discoveryRoot, clips, cache, progress, runner, cancellationToken).ConfigureAwait(false); }
++                try
++                {
++                    // Taunts installed with the Move Installer live in its own wwe.adefs
++                    // (discovery\_moves); look there first, then search archives for the rest.
++                    DiscoveryMotionFallbacks installed = AdefsMotions.Find(gameRoot, discoveryRoot, clips, cache, progress, cancellationToken);
++                    string[] remaining = clips.Where(clip => !installed.Assets.ContainsKey(clip)).ToArray();
++                    DiscoveryMotionFallbacks result = await FindCore(appRoot, gameRoot, discoveryRoot, remaining, cache, progress, runner, cancellationToken).ConfigureAwait(false);
++                    foreach (var pair in installed.Assets) { result.Assets[pair.Key] = pair.Value; result.Issues.Remove(pair.Key); }
++                    result.Warnings.InsertRange(0, installed.Warnings);
++                    if (installed.Assets.Count > 0 && remaining.Length == 0)
++                        result.Status = installed.Assets.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + " animation(s) recovered from the Move Installer's wwe.adefs.";
++                    return result;
++                }
+                 finally { DiscoveryArchiveRenders.AssetGate.Release(); }
+             }, cancellationToken);
+         }
+@@ -160,7 +183,10 @@ namespace GorillaStudio.NameFolders
+                                 string sha = HashBytes(bytes);
+                                 Tuple<DiscoveryMotionAsset, string> previous;
+                                 if (local.TryGetValue(pair.Key, out previous) && previous.Item2 != sha)
+-                                { Conflict(pair.Key, accepted, conflicts, result); local.Remove(pair.Key); break; }
++                                {
++                                    if (Policy == DiscoveryMotionSourcePolicy.BestAvailable) break; // Keep this container's first record.
++                                    Conflict(pair.Key, accepted, conflicts, result); local.Remove(pair.Key); break;
++                                }
+                                 string output = Path.Combine(directory, pair.Key + ".clip");
+                                 Retain(output, bytes.Length, retainedPaths, ref retainedBytes);
+                                 writtenRecords.Add(output);
+@@ -184,7 +210,8 @@ namespace GorillaStudio.NameFolders
+                 catch (Exception error) when (Expected(error))
+                 { result.Incomplete = true; result.Warnings.Add("Could not read archive motion " + candidate.Path + ": " + error.Message); }
+             }
+-            ApplyCoverage(requested, accepted, coverage, conflicts, result);
++            bool strict = Policy == DiscoveryMotionSourcePolicy.Strict;
++            if (strict) ApplyCoverage(requested, accepted, coverage, conflicts, result);
+             // Negative catalogs and byte-identical aliases are evidence too. If
+             // any indexed source changed after its scan, it may now contain an
+             // active override even when the selected positive source is stable.
+@@ -200,14 +227,23 @@ namespace GorillaStudio.NameFolders
+             // A skipped or unreadable motion source may contain a second payload
+             // for any requested ID. Archive load order is unknown: uncertainty is
+             // not permission to install the first apparently matching stock clip.
+-            if (result.Incomplete)
++            if (result.Incomplete && strict)
+             {
+                 foreach (string clip in accepted.Keys)
+                     if (!result.Issues.ContainsKey(clip)) result.Issues[clip] = "The motion matched, but another motion source was unreadable, ambiguous or budget-limited. Its active override cannot be ruled out; export the active .clip into Discovery data or resolve the archive warning and retry.";
+                 accepted.Clear();
+             }
+             token.ThrowIfCancellationRequested();
+-            foreach (var pair in accepted) result.Assets[pair.Key] = pair.Value[0].Asset;
++            int picked = 0;
++            foreach (var pair in accepted)
++            {
++                if (strict || pair.Value.Count == 1) { result.Assets[pair.Key] = pair.Value[0].Asset; continue; }
++                Accepted winner = pair.Value.OrderByDescending(SourceRank).First();
++                if (pair.Value.Select(value => value.Sha).Distinct(StringComparer.Ordinal).Skip(1).Any()) picked++;
++                result.Assets[pair.Key] = winner.Asset;
++            }
++            if (picked > 0)
++                result.Warnings.Add(picked + " taunt animation(s) exist in several archives with different versions; Studio used the mod version first, then the newest game patch (bakedfile with the highest number).");
+             foreach (string clip in clips)
+                 if (!result.Assets.ContainsKey(clip) && !result.Issues.ContainsKey(clip))
+                     result.Issues[clip] = lookup.ArchiveCount == 0
+@@ -406,6 +442,27 @@ namespace GorillaStudio.NameFolders
+             retained.Add(path); bytes += length;
+         }
+ 
++        // Mods override the base game; among base archives the highest bakedfile
++        // number is the newest patch; among mods the most recently written file wins.
++        private static Tuple<int, long, string> SourceRank(Accepted value)
++        {
++            string path = value.Index.ArchivePath ?? "";
++            string normalized = path.Replace('\\', '/');
++            bool mod = normalized.IndexOf("/mods/", StringComparison.OrdinalIgnoreCase) >= 0;
++            long order = 0;
++            if (mod)
++            {
++                try { order = File.GetLastWriteTimeUtc(path).Ticks; }
++                catch (Exception) { order = 0; } // Ordering only; an unreadable date ranks oldest.
++            }
++            else
++            {
++                Match baked = Regex.Match(Path.GetFileName(path), @"bakedfile0*([0-9]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
++                if (baked.Success) long.TryParse(baked.Groups[1].Value, out order);
++            }
++            return Tuple.Create(mod ? 1 : 0, order, path.ToLowerInvariant());
++        }
++
+         private static void Conflict(string clip, Dictionary<string, List<Accepted>> accepted, HashSet<string> conflicts, DiscoveryMotionFallbacks result)
+         {
+             accepted.Remove(clip); conflicts.Add(clip);
+diff --git a/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs b/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
+index f214b99..243a4a8 100644
+--- a/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
++++ b/src/GorillaStudio.NameFolders/DiscoveryMotionAssets.cs
+@@ -89,6 +89,15 @@ namespace GorillaStudio.NameFolders
+             result.searchRoots.Add(root);
+             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+             var pending = new Stack<PendingDirectory>();
++            // The Move Installer puts installed moves in a "_moves" folder beside
++            // discovery_data (baked separately as _moves.cak). Read it too, after
++            // discovery_data, so installed taunts are found like loose Discovery clips.
++            string moves = MovesRoot(root);
++            if (moves != null)
++            {
++                result.searchRoots.Add(moves);
++                pending.Push(new PendingDirectory { Path = moves, BoundPath = moves });
++            }
+             pending.Push(new PendingDirectory { Path = root, BoundPath = root });
+             var containers = new List<MotionSnapshot>();
+             var loose = new List<MotionSnapshot>();
+@@ -151,6 +160,21 @@ namespace GorillaStudio.NameFolders
+             return result;
+         }
+ 
++        /// <summary>The Move Installer's "_moves" folder beside the Discovery data folder, if present.</summary>
++        internal static string MovesRoot(string discoveryDataRoot)
++        {
++            try
++            {
++                string parent = System.IO.Path.GetDirectoryName(discoveryDataRoot.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
++                if (string.IsNullOrEmpty(parent)) return null;
++                string moves = System.IO.Path.Combine(parent, "_moves");
++                return Directory.Exists(moves) && !SamePath(moves, discoveryDataRoot) ? System.IO.Path.GetFullPath(moves) : null;
++            }
++            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is ArgumentException
++                || error is NotSupportedException || error is System.Security.SecurityException)
++            { return null; }
++        }
++
+         /// <summary>Audits the captured paths without reopening any animation table or payload.</summary>
+         public bool IsCurrent(CancellationToken cancellationToken)
+         {

@@ -1,0 +1,286 @@
+--- /tmp/claude-0/-home-user-MOVINGONUP/f98ffcff-347d-57c6-9c66-ecf0263dc887/scratchpad/facepaint/gr_render.before.py	2026-11-24 15:24:28.364971490 +0000
++++ /tmp/claude-0/-home-user-MOVINGONUP/f98ffcff-347d-57c6-9c66-ecf0263dc887/scratchpad/src/MAKE-A-RENDER-READER/runtime/engine/gr_render.py	2026-11-24 15:24:48.366535851 +0000
+@@ -848,6 +848,272 @@
+     pass  # Non-rendering tools may import this module without Blender.
+ 
+ 
++_FACE_PAINT_WORDS = ("paint", "makeup", "make_up", "decal", "facepaint", "warpaint")
++_FACE_PAINT_SKIP = ("_nrm", "_normal", "_rai", "_spec", "_flush", "_mask", "_ao", "_rough", "wrinkle", "_cavity", "_height")
++
++
++def _face_paint_folders(options):
++    """BaseModel and selected-attire texture/material folders of the rendered character."""
++    char = options.get("char_dir")
++    if not char or not os.path.isdir(char):
++        return None
++    attire = options.get("attire_mcd", "")
++    attire_dir = os.path.dirname(attire if os.path.isabs(attire) else os.path.join(char, attire)) if attire else None
++    folders = {"base": os.path.join(char, "BaseModel")}
++    if attire_dir and os.path.isdir(attire_dir):
++        folders["attire"] = attire_dir
++    return folders
++
++
++def _jmtl_refs(path):
++    """Every 8-byte reference stored in a head material, as 16-digit hex in both byte orders."""
++    try:
++        with open(path, "rb") as stream:
++            data = stream.read(1 << 20)
++    except OSError:
++        return set()
++    refs = set()
++    for offset in range(0, len(data) - 7, 4):
++        chunk = data[offset:offset + 8]
++        if chunk.count(0) > 2 or chunk == b"\xff" * 8:
++            continue
++        refs.add(chunk.hex())
++        refs.add(chunk[::-1].hex())
++    return refs
++
++
++def _face_paint_candidates(folders):
++    """Paint layers (and painted head colours) shipped beside the head, attire first.
++
++    Returns (attire_head_colour or None, [paint texture paths], [notes]).
++    A face-paint layer is a texture next to the head textures named for paint
++    or make-up, or a hash-named texture that the head material references.
++    """
++    notes, paints, attire_head = [], [], None
++    base_head = os.path.join(folders["base"], "Textures", "head_color.dds")
++    for key in ("attire", "base"):
++        folder = folders.get(key)
++        if not folder:
++            continue
++        textures = os.path.join(folder, "Textures")
++        if not os.path.isdir(textures):
++            continue
++        refs = set()
++        for material in ("head.jmtl", "Head.jmtl", "m_head.jmtl"):
++            path = os.path.join(folder, "Materials", material)
++            if os.path.isfile(path):
++                refs |= _jmtl_refs(path)
++        for name in sorted(os.listdir(textures), key=str.lower):
++            path = os.path.join(textures, name)
++            stem, extension = os.path.splitext(name.lower())
++            if extension not in (".dds", ".png", ".tga") or not os.path.isfile(path):
++                continue
++            if stem == "head_color":
++                if key == "attire":
++                    try:
++                        differs = not os.path.isfile(base_head) or os.path.getsize(path) != os.path.getsize(base_head) \
++                            or open(path, "rb").read() != open(base_head, "rb").read()
++                    except OSError:
++                        differs = False
++                    if differs:
++                        attire_head = path
++                        notes.append("attire head colour: " + path)
++                continue
++            if any(word in stem for word in _FACE_PAINT_SKIP):
++                continue
++            named = any(word in stem for word in _FACE_PAINT_WORDS)
++            hashed = len(stem) == 16 and all(c in "0123456789abcdef" for c in stem) and stem in refs
++            if named or hashed:
++                paints.append(path)
++                notes.append(key + " paint candidate: " + path + (" (referenced by head material)" if hashed else ""))
++    return attire_head, paints, notes
++
++
++def _register_face_paint():
++    """Keep face paint on the head through every rendered frame.
++
++    The original renderer gives the head only its head_color texture, so a
++    paint layer shipped beside it (or a painted head colour in the attire
++    folder) never reaches the render. This lays the paint over the head
++    colour by its own alpha, in the head material, before each frame.
++    """
++    import bpy
++
++    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
++    if handlers is None:
++        return
++    for previous in list(handlers.render_pre):
++        if getattr(previous, "_gorilla_face_paint", False):
++            handlers.render_pre.remove(previous)
++    folders = _face_paint_folders(_renderer_options())
++    report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_paint_report.txt")
++    if folders is None:
++        return
++    attire_head, paints, notes = _face_paint_candidates(folders)
++    done = set()
++    state = {"reported": False, "images": {}}
++
++    def report(lines):
++        if state["reported"]:
++            return
++        state["reported"] = True
++        text = ["character: " + os.path.dirname(folders["base"])] + notes + lines
++        for line in lines:
++            print("  face paint:", line, flush=True)
++        try:
++            with open(report_path, "w", encoding="utf-8") as stream:
++                stream.write("\n".join(text) + "\n")
++        except OSError:
++            pass
++
++    def load(path):
++        if path not in state["images"]:
++            try:
++                state["images"][path] = bpy.data.images.load(path, check_existing=True)
++            except (RuntimeError, OSError):
++                state["images"][path] = None
++        return state["images"][path]
++
++    def alpha_kind(image):
++        """'overlay' when the alpha cuts out a layer, 'opaque' when it covers everything, else None."""
++        try:
++            copy = image.copy()
++            try:
++                copy.scale(128, 128)
++                values = list(copy.pixels[3::4])
++            finally:
++                bpy.data.images.remove(copy)
++        except (RuntimeError, ValueError, ReferenceError):
++            return None
++        if not values:
++            return None
++        clear = sum(1 for value in values if value < 0.1)
++        solid = sum(1 for value in values if value > 0.5)
++        if solid == 0:
++            return None
++        if clear >= len(values) * 0.05:
++            return "overlay"
++        return "opaque" if clear == 0 else "overlay"
++
++    def head_colour_node(material):
++        if not material.use_nodes or material.node_tree is None:
++            return None
++        nodes = [node for node in material.node_tree.nodes if node.type == "TEX_IMAGE" and node.image is not None]
++        named = [node for node in nodes if "head_color" in (node.image.name + " " + node.image.filepath).lower().replace("\\", "/")]
++        if named:
++            return named[0]
++        for shader in material.node_tree.nodes:
++            if shader.type != "BSDF_PRINCIPLED":
++                continue
++            pending = [link.from_node for link in shader.inputs["Base Color"].links]
++            seen = set()
++            while pending:
++                node = pending.pop()
++                if node.as_pointer() in seen:
++                    continue
++                seen.add(node.as_pointer())
++                if node.type == "TEX_IMAGE" and node.image is not None:
++                    return node
++                for socket in node.inputs:
++                    pending.extend(link.from_node for link in socket.links)
++        return None
++
++    def mix_node(tree):
++        try:
++            mix = tree.nodes.new("ShaderNodeMix")
++            mix.data_type = "RGBA"
++            mix.blend_type = "MIX"
++            factor = next(socket for socket in mix.inputs if socket.name == "Factor" and socket.type == "VALUE")
++            first = next(socket for socket in mix.inputs if socket.name == "A" and socket.type == "RGBA")
++            second = next(socket for socket in mix.inputs if socket.name == "B" and socket.type == "RGBA")
++            result = next(socket for socket in mix.outputs if socket.name == "Result" and socket.type == "RGBA")
++            return mix, factor, first, second, result
++        except (RuntimeError, StopIteration, AttributeError, TypeError):
++            mix = tree.nodes.new("ShaderNodeMixRGB")
++            return mix, mix.inputs["Fac"], mix.inputs["Color1"], mix.inputs["Color2"], mix.outputs["Color"]
++
++    def apply(material, head):
++        lines = []
++        tree = material.node_tree
++        if attire_head:
++            image = load(attire_head)
++            if image is not None:
++                image.colorspace_settings.name = head.image.colorspace_settings.name
++                head.image = image
++                lines.append("head uses the attire's own head colour")
++        for path in paints:
++            image = load(path)
++            if image is None:
++                lines.append("could not load " + path)
++                continue
++            kind = alpha_kind(image)
++            if kind == "opaque" and any(word in os.path.basename(path).lower() for word in _FACE_PAINT_WORDS):
++                image.colorspace_settings.name = head.image.colorspace_settings.name
++                head.image = image
++                lines.append("painted head colour applied: " + path)
++                return lines
++            if kind != "overlay":
++                lines.append("skipped (no paint alpha): " + path)
++                continue
++            image.colorspace_settings.name = head.image.colorspace_settings.name
++            try:
++                image.alpha_mode = "STRAIGHT"
++            except (AttributeError, TypeError):
++                pass
++            paint = tree.nodes.new("ShaderNodeTexImage")
++            paint.image = image
++            paint.interpolation = head.interpolation
++            paint.location = (head.location[0], head.location[1] - 300)
++            vector = head.inputs["Vector"].links
++            if vector:
++                tree.links.new(vector[0].from_socket, paint.inputs["Vector"])
++            targets = [link.to_socket for link in head.outputs["Color"].links]
++            mix, factor, first, second, result = mix_node(tree)
++            mix.location = (head.location[0] + 250, head.location[1] - 150)
++            tree.links.new(head.outputs["Color"], first)
++            tree.links.new(paint.outputs["Color"], second)
++            tree.links.new(paint.outputs["Alpha"], factor)
++            for target in targets:
++                tree.links.new(result, target)
++            lines.append("paint layer applied over the head: " + path)
++            return lines
++        return lines
++
++    def repair(scene, unused_depsgraph=None):
++        lines = []
++        for obj in scene.objects:
++            if obj.type != "MESH":
++                continue
++            for slot in obj.material_slots:
++                material = slot.material
++                if material is None or material.as_pointer() in done:
++                    continue
++                if material.name.split(":", 1)[0].strip("_").lower() not in ("head", "m_head"):
++                    continue
++                done.add(material.as_pointer())
++                if material.get("gorilla_face_paint"):
++                    continue
++                head = head_colour_node(material)
++                if head is None:
++                    lines.append("head material " + material.name + " has no colour texture")
++                    continue
++                try:
++                    applied = apply(material, head)
++                    lines.extend(applied)
++                    if any(line.startswith(("paint layer", "painted head", "head uses")) for line in applied):
++                        material["gorilla_face_paint"] = 1
++                except (RuntimeError, KeyError, AttributeError, TypeError, ReferenceError) as error:
++                    lines.append("could not apply paint: " + str(error))
++        if lines or not state["reported"]:
++            if not paints and not attire_head:
++                lines.append("no face paint layer next to this character's head textures")
++            report(lines)
++
++    repair._gorilla_face_paint = True
++    repair = handlers.persistent(repair)
++    handlers.render_pre.append(repair)
++
++
+ # BEGIN GENERATED GEOMETRY BUNDLE
+ _GEOMETRY_BUNDLE = {
+     'gorilla_geometry': ('f032e583d1f13f6e6258edd05b6bef48cb135a465ec0665806cada7a42e44988',
+@@ -1182,6 +1448,10 @@
+ 
+ 
+ def _run_renderer():
++    try:
++        _register_face_paint()
++    except Exception as error:  # The render must never fail because of the paint pass.
++        print("  face paint: unavailable:", str(error), flush=True)
+     _register_hair_motion()
+     if os.environ.get("GORILLA_GEOMETRY_REVISION") != "1":
+         return _original_renderer()

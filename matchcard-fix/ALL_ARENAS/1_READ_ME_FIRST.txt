@@ -13,7 +13,7 @@ WHAT'S INSIDE
                         stand-ins (no card of their own; copies under the likely file names):
                         Dynasty 2025 = Dynasty 2026 card, Revolution 2025 = Revolution 2026 card,
                         Title Tuesday 2025 = Dynamite card;
-                        All In 2026 NIGHT from titavius_aew_2026_extended.cak;
+                        All In 2026 NIGHT + All Out 2026 from titavius_aew_2026_extended.cak;
                         Grand Slam MX 26, Arena Mexico (CC64), Spring Break X (TxM Project Indy),
                         ECW on TNN (titavius_ecw), Clash in Italy (Rev),
                         SNME 46 (Rev), SNME XLII Last Cena (John Cena arenas 2025), MLW Fusion,
